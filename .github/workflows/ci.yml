@@ -1,0 +1,95 @@
+name: Native validation
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GOTOOLCHAIN: local
+  GOFLAGS: -p=2
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go: ['1.25.x', stable]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Windows race compiler prerequisites
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          gcc --version
+          $library = gcc --print-file-name=libsynchronization.a
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $library)) { throw 'Compatible MinGW-w64 runtime required for race detection' }
+          go env GOOS GOARCH CGO_ENABLED CC
+      - run: go run ./tools/dev validate
+      - name: Package native CI candidate with corresponding source
+        if: matrix.go == 'stable' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        run: go run ./tools/dev package v0.1.0-ci.${{ github.run_number }} --native
+      - name: Upload temporary candidate downloads
+        if: matrix.go == 'stable' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workcopy-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          path: |
+            dist/workcopy_*.zip
+            dist/workcopy_*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+  lane-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      WORKCOPY_NODE_LANE_ACCEPTANCE: '1'
+      WORKCOPY_DOTNET_LANE_ACCEPTANCE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Selected .NET and offline Node lane build/test
+        run: go test ./tests/acceptance -run '^(TestSelectedDotNetProjectBuildsAndTestsInsideLane|TestSelectedNodeWorkspaceBuildsAndTestsInsideLane)$' -count=1 -timeout=180s
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

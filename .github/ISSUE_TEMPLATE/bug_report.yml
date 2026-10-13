@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible Workcopy defect.
+body:
+  - type: markdown
+    attributes:
+      value: "Do not post vulnerabilities or secrets here. Use SECURITY.md for private reporting."
+  - type: input
+    id: version
+    attributes:
+      label: Workcopy version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Platform and tools
+      description: Include OS, architecture, Go/Git versions and filesystem type. Redact private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a small synthetic repository and exact commands, not your private source archive.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and observed behaviour
+      description: Include process exit codes and whether a journal or conflict remains.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Validation evidence
+      description: State which commands ran natively, which were cross-compiled and which could not run.

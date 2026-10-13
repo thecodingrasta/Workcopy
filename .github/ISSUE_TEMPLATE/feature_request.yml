@@ -1,0 +1,21 @@
+name: Feature request
+description: Describe a workflow that Workcopy does not support.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Workflow and problem
+      description: Describe the repository layout, platform and the result you need.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: Include safety, compatibility and storage implications.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing alternatives or workarounds

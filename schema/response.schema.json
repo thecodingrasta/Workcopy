@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workcopy response envelope version 1",
+  "description": "Command-specific fields are additive; clients must ignore unknown response fields.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "exitCode",
+    "command"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "exitCode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "command": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "suggestion": {
+          "type": "string"
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "base",
+          "local",
+          "upstream"
+        ]
+      }
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

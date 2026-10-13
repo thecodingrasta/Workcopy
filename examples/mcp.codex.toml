@@ -1,0 +1,6 @@
+[mcp_servers.workcopy]
+command = 'C:\tools\workcopy.exe'
+args = ['mcp', '--root', 'C:\workcopy-lanes', '--max-lanes', '32', '--reserve-mib', '8192']
+enabled = true
+startup_timeout_sec = 20
+tool_timeout_sec = 180
