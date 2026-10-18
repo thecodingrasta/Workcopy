@@ -59,7 +59,15 @@ func TestRepositoryAndRootScopeArePerCall(t *testing.T) {
 }
 
 func TestRepositoryFreeDefaultsAndRootLocks(t *testing.T) {
-	parent := t.TempDir()
+	parent, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = resolved
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	s := New(nil, "test", Options{Root: parent, MaxLanes: 1})
 	session := connectServer(t, s)
 	missing := call(t, session, "bootstrap", Empty{})

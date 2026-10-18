@@ -9,6 +9,7 @@
 .env.*
 !.env.example
 /.codex/
+/.kiro/
 /.gitnexus/
 /.gitnexusignore
 /vendor/
@@ -16,5 +17,3 @@
 /.vscode/
 .DS_Store
 Thumbs.db
-.editorconfig
-.gitattributes

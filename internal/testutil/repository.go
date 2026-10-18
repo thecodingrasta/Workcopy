@@ -18,7 +18,15 @@ type Repository struct {
 
 func NewRepository(t testing.TB) *Repository {
 	t.Helper()
-	parent := t.TempDir()
+	parent, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = resolved
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(parent, ".workcopy-fixture-owner"), []byte("Workcopy test fixture root\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

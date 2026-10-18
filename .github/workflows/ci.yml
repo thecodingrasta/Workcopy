@@ -11,7 +11,6 @@ concurrency:
   group: validate-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 env:
-  GOTOOLCHAIN: local
   GOFLAGS: -p=2
 jobs:
   test:
@@ -92,4 +91,4 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
