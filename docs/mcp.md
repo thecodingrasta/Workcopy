@@ -28,11 +28,9 @@ tool_timeout_sec = 180
 
 On Linux/macOS, use native absolute paths, such as `/opt/workcopy/workcopy` and a private directory outside your checkouts. Restart the host and confirm that `workcopy_bootstrap` is available. See the [official Codex MCP configuration](https://developers.openai.com/codex/mcp).
 
-### Other MCP hosts
+### Claude Code, Kiro, Antigravity and other MCP hosts
 
-[JSON example](../examples/mcp.json).
-
-Use the host's local/stdio server settings with the same executable and argument list. For hosts that accept `mcpServers` JSON:
+These hosts, and most others, read the same `mcpServers` JSON shape, just from different config files. [JSON example](../examples/mcp.json).
 
 ```json
 {
@@ -48,9 +46,16 @@ Use the host's local/stdio server settings with the same executable and argument
 }
 ```
 
-Replace all paths. Hosts with a settings UI need the same command and arguments; configuration key names may differ. Linux/macOS use absolute native paths. The root must be private, local, and outside every Git checkout. Give the host access to its lane/root, source checkout and Git common directory. MCP availability does not grant worker filesystem access.
+Replace the executable and `--root` paths. On Linux/macOS, use a native absolute path.
 
-For the simplest multi-repository setup:
+| Host | Where this goes |
+| --- | --- |
+| Claude Code | project `.mcp.json` or global MCP settings |
+| Kiro | `.kiro/settings/mcp.json` or user-level settings |
+| Antigravity | its MCP server configuration |
+| Other hosts | wherever that host reads `mcpServers` JSON; a settings UI needs the same `command`/`args`, key names may differ |
+
+Restart the host and confirm `workcopy_bootstrap` is available. The root must be private, local, and outside every Git checkout. Give the host access to its lane/root, source checkout and Git common directory; MCP availability does not grant worker filesystem access.
 
 - Leave `--repo` unset. Set `--root` once to a private storage parent outside every checkout.
 - Bootstrap the current directory and retain the returned `scope.repo` and `scope.root` in worker handoffs and subsequent calls.

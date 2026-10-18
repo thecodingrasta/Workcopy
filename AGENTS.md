@@ -1,5 +1,7 @@
 # Repository instructions for coding agents
 
+This file governs agents contributing to Workcopy's own source. An agent using the built Workcopy CLI or MCP server as a tool on a different repository wants [docs/agents.md](docs/agents.md) and [docs/mcp.md](docs/mcp.md) instead.
+
 Read `README.md`, `docs/architecture.md` and `CONTRIBUTING.md` before changing behaviour. Use the existing package boundaries. Do not create a second workspace engine or replace the CLI framework without a demonstrated need.
 
 Reproduce defects with real disposable Git repositories. Add a failing regression before a fix. Run `go run ./tools/dev validate` and report exact commands, results and unavailable platforms. Cross-compilation is not native validation.

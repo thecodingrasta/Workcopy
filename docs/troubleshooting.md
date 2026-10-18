@@ -8,6 +8,10 @@ Run `go run ./tools/dev install` from the source directory. Check `go env GOBIN 
 
 Use Git 2.43 or newer. `doctor` reports the installed executable's version, while source materialization checks attribute support. Workcopy rejects external filters, LFS filters, `working-tree-encoding` and `ident` rather than running repository-configured commands. Use a supported repository layout or exclude irrelevant affected source explicitly.
 
+## A lane-only command fails outside any Git repository
+
+`destroy`, `status`, `sync`, `recover` and the other lane commands still resolve a repository context even when `--root` alone looks sufficient. Without `--repo`, Workcopy falls back to the current directory; outside a lane and outside a Git checkout, that fails with a raw Git error such as `not a git repository (or any of the parent directories): .git`. Run the command from inside the lane, from inside the original checkout, or pass `--repo` explicitly alongside the registered lane's `--root` and name.
+
 ## A selected project does not build
 
 Workcopy did not run a build. Check the profile's projects, shared imports, SDK/runtime and dependency configuration. Use `discover` warnings and explicit dependencies for relationships that cannot be found declaratively. For .NET, generate and inspect a solution filter rather than building a full solution containing absent projects.
