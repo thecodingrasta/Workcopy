@@ -43,8 +43,7 @@ jobs:
         with:
           name: release-downloads
           path: |
-            dist/workcopy_*.zip
-            dist/workcopy_*.tar.gz
+            dist/workcopy_*
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
@@ -73,21 +72,19 @@ jobs:
         with:
           name: release-downloads
           path: downloads
-      - name: Verify and exercise the extracted native executable
+      - name: Verify and exercise the downloaded native executable
         shell: pwsh
         env:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $extension = if ($env:TARGET.StartsWith('windows_')) { '.zip' } else { '.tar.gz' }
+          $extension = if ($env:TARGET.StartsWith('windows_')) { '.exe' } else { '' }
           $name = "workcopy_$($env:VERSION)_$($env:TARGET)$extension"
           $checksum = Get-Content downloads/SHA256SUMS | Where-Object { $_.EndsWith("  $name") }
           if (!$checksum -or (Get-FileHash "downloads/$name" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $checksum.Split(' ')[0]) { throw 'Checksum mismatch' }
-          New-Item -ItemType Directory extracted | Out-Null
-          tar -xf "downloads/$name" -C extracted
-          if ($LASTEXITCODE -ne 0) { throw 'Extraction failed' }
-          $binary = if ($env:TARGET.StartsWith('windows_')) { './extracted/workcopy.exe' } else { './extracted/workcopy' }
+          $binary = "downloads/$name"
+          if (-not $env:TARGET.StartsWith('windows_')) { chmod +x $binary; if ($LASTEXITCODE -ne 0) { throw 'chmod failed' } }
           $version = & $binary version --json | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $version.exitCode -ne 0 -or !$version.message.StartsWith("Workcopy $($env:VERSION) ($($env:TARGET.Replace('_','/')), ")) { throw 'Version or native architecture mismatch' }
           & $binary doctor --json
@@ -115,4 +112,4 @@ jobs:
           set -euo pipefail
           flags=(--verify-tag --draft --generate-notes)
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$VERSION" dist/workcopy_*.zip dist/workcopy_*.tar.gz dist/SHA256SUMS "${flags[@]}"
+          gh release create "$VERSION" dist/workcopy_* dist/SHA256SUMS "${flags[@]}"

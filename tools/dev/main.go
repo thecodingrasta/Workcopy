@@ -49,6 +49,9 @@ func run(ctx context.Context, arguments []string) error {
 	case "format":
 		return formatFiles(root, true)
 	case "test":
+		if err = prepareTestEnvironment(); err != nil {
+			return err
+		}
 		return command(ctx, nil, "go", "test", "-count=1", "-timeout=180s", "./...")
 	case "build":
 		return build(ctx, root, runtime.GOOS, runtime.GOARCH, "dev", binaryName(runtime.GOOS))
@@ -59,6 +62,9 @@ func run(ctx context.Context, arguments []string) error {
 		return command(ctx, nil, "go", "install", "-trimpath", "-buildvcs=false", "./cmd/workcopy")
 	case "validate":
 		if err = prerequisites(ctx); err != nil {
+			return err
+		}
+		if err = prepareTestEnvironment(); err != nil {
 			return err
 		}
 		if err = formatFiles(root, false); err != nil {
@@ -94,6 +100,49 @@ func run(ctx context.Context, arguments []string) error {
 		return fmt.Errorf("unknown task %q", arguments[0])
 	}
 }
+func prepareTestEnvironment() error {
+	current := os.TempDir()
+	if !isGitCheckoutPath(current) {
+		return nil
+	}
+	candidates := []string{}
+	if override := os.Getenv("WORKCOPY_TEST_TEMP"); override != "" {
+		candidates = append(candidates, override)
+	}
+	if runtime.GOOS == "windows" {
+		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+			candidates = append(candidates, filepath.Join(localAppData, "Temp"))
+		}
+		candidates = append(candidates, filepath.Join(os.Getenv("SystemDrive"), "Windows", "Temp"))
+	} else {
+		candidates = append(candidates, "/tmp")
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if err := os.MkdirAll(candidate, 0700); err != nil {
+			continue
+		}
+		if isGitCheckoutPath(candidate) {
+			continue
+		}
+		for _, key := range []string{"TEMP", "TMP", "TMPDIR"} {
+			if err := os.Setenv(key, candidate); err != nil {
+				return fmt.Errorf("set safe test temporary directory %s=%q: %w", key, candidate, err)
+			}
+		}
+		fmt.Printf("Using safe test temporary directory outside Git checkouts: %s\n", candidate)
+		return nil
+	}
+	return fmt.Errorf("test temporary directory %q is inside a Git checkout; set WORKCOPY_TEST_TEMP to an existing local directory outside every Git checkout", current)
+}
+
+func isGitCheckoutPath(directory string) bool {
+	command := exec.Command("git", "-C", directory, "rev-parse", "--show-toplevel")
+	return command.Run() == nil
+}
+
 func command(ctx context.Context, environment []string, executable string, arguments ...string) error {
 	fmt.Printf("+ %s %s\n", executable, strings.Join(arguments, " "))
 	process := exec.CommandContext(ctx, executable, arguments...)

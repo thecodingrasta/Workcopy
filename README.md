@@ -35,11 +35,11 @@ What actually keeps disk use down with Workcopy is **project selection**: on a m
 
 Needs Git 2.43 or newer. Go is only needed to build from source.
 
-1. Download your platform's archive and `SHA256SUMS` from [Releases](https://github.com/thecodingrasta/workcopy/releases).
-2. Verify the checksum, unzip, and put `workcopy` (or `workcopy.exe`) on your `PATH`.
+1. Download your platform's `workcopy` executable and `SHA256SUMS` from [Releases](https://github.com/thecodingrasta/workcopy/releases).
+2. Verify the checksum, then put `workcopy` (or `workcopy.exe`) on your `PATH`. No archive to extract.
 3. Run `workcopy version` then `workcopy doctor` to confirm it works.
 
-Before the first published release, use the [Windows amd64 candidate](prebuilt/README.md). Other platforms are available as [CI artifacts](https://github.com/thecodingrasta/workcopy/actions/workflows/ci.yml) (GitHub sign-in required).
+Before the first published release, use the [Windows amd64 bootstrap candidate](prebuilt/README.md); it is a legacy ZIP-based exception. Other platforms are available as [CI artifacts](https://github.com/thecodingrasta/workcopy/actions/workflows/ci.yml) (GitHub sign-in required), and normal release assets are bare executables.
 
 Building from source needs at least Go 1.25:
 

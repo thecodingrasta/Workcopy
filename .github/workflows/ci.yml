@@ -47,8 +47,7 @@ jobs:
         with:
           name: workcopy-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
           path: |
-            dist/workcopy_*.zip
-            dist/workcopy_*.tar.gz
+            dist/workcopy_*
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

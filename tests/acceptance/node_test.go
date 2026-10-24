@@ -2,9 +2,11 @@ package acceptance
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,26 +14,65 @@ import (
 	"workcopy/internal/testutil"
 )
 
+var (
+	nodeTestsOne = regexp.MustCompile(`(?m)(?:^|\s)tests\s+1(?:\s|$)`)
+	nodePassOne  = regexp.MustCompile(`(?m)(?:^|\s)pass\s+1(?:\s|$)`)
+	nodeFailures = regexp.MustCompile(`(?m)(?:^|\s)fail\s+[1-9]`)
+)
+
+func findNodeAndNPMCLI() (string, string, error) {
+	pathEntries := filepath.SplitList(os.Getenv("PATH"))
+	for _, directory := range pathEntries {
+		for _, executable := range []string{"node.exe", "node"} {
+			node := filepath.Join(directory, executable)
+			if !regularFile(node) {
+				continue
+			}
+			for _, npmCLI := range []string{
+				filepath.Join(directory, "node_modules", "npm", "bin", "npm-cli.js"),
+				filepath.Join(directory, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+				filepath.Join(directory, "..", "share", "nodejs", "npm", "bin", "npm-cli.js"),
+			} {
+				if regularFile(npmCLI) {
+					return node, npmCLI, nil
+				}
+			}
+		}
+	}
+	for _, commandName := range []string{"npm.cmd", "npm", "npm.ps1"} {
+		npm, err := exec.LookPath(commandName)
+		if err != nil {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(npm)
+		if err == nil && strings.HasSuffix(strings.ToLower(filepath.ToSlash(resolved)), "/npm/bin/npm-cli.js") {
+			node, nodeErr := exec.LookPath("node")
+			if nodeErr == nil {
+				return node, resolved, nil
+			}
+		}
+	}
+	return "", "", fmt.Errorf("could not locate a native node executable paired with npm-cli.js on PATH")
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func nodeTestPassed(output string) bool {
+	return nodeTestsOne.MatchString(output) && nodePassOne.MatchString(output) && !nodeFailures.MatchString(output)
+}
+
 // Explicit scripts are opt-in even though this fixture has no dependencies,
 // downloads or lifecycle hooks. npm executes only the tiny scripts below.
 func TestSelectedNodeWorkspaceBuildsAndTestsInsideLane(t *testing.T) {
 	if os.Getenv("WORKCOPY_NODE_LANE_ACCEPTANCE") != "1" {
 		t.Skip("set WORKCOPY_NODE_LANE_ACCEPTANCE=1 to approve the offline npm script fixture")
 	}
-	node, err := exec.LookPath("node")
+	node, npmCLI, err := findNodeAndNPMCLI()
 	if err != nil {
 		t.Fatal(err)
-	}
-	npmCLI := filepath.Join(filepath.Dir(node), "node_modules", "npm", "bin", "npm-cli.js")
-	if _, err := os.Stat(npmCLI); err != nil {
-		npm, lookupErr := exec.LookPath("npm")
-		if lookupErr != nil {
-			t.Fatal("the opt-in Node fixture requires npm")
-		}
-		npmCLI, err = filepath.EvalSymlinks(npm)
-		if err != nil || !strings.HasSuffix(npmCLI, ".js") {
-			t.Fatal("could not locate npm-cli.js without executing a shell wrapper")
-		}
 	}
 	r := testutil.NewRepository(t)
 	r.Write(".gitignore", ".lane-build/\n")
@@ -78,8 +119,8 @@ func TestSelectedNodeWorkspaceBuildsAndTestsInsideLane(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("offline npm run %s: %v\n%s", script, runErr, output)
 		}
-		if script == "test" && !strings.Contains(string(output), "# pass 1") {
-			t.Fatalf("npm test did not execute one passing test:\n%s", output)
+		if script == "test" && !nodeTestPassed(string(output)) {
+			t.Fatalf("npm test did not report one passing test:\n%s", output)
 		}
 		t.Logf("npm run %s exit 0", script)
 	}
@@ -97,5 +138,19 @@ func TestSelectedNodeWorkspaceBuildsAndTestsInsideLane(t *testing.T) {
 	t.Logf("offline Node scenario allocated file bytes: %d", allocated)
 	if allocated > 32<<20 {
 		t.Fatalf("Node fixture exceeds 32 MiB budget: %d", allocated)
+	}
+}
+
+func TestNodeTestPassedAcceptsSupportedSummaryFormats(t *testing.T) {
+	for _, output := range []string{
+		"# tests 1\n# pass 1\n# fail 0\n",
+		"ℹ tests 1\nℹ pass 1\nℹ fail 0\n",
+	} {
+		if !nodeTestPassed(output) {
+			t.Fatalf("accepted Node summary was rejected: %q", output)
+		}
+	}
+	if nodeTestPassed("ℹ tests 1\nℹ pass 0\nℹ fail 1\n") {
+		t.Fatal("failed Node summary was accepted")
 	}
 }

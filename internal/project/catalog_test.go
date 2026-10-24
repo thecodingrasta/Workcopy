@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+
 	"workcopy/internal/git"
 	"workcopy/internal/model"
 	"workcopy/internal/testutil"
@@ -126,5 +127,58 @@ func TestRecursiveGlobDoesNotExpandExponentially(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("recursive glob did not finish within a bounded interval")
+	}
+}
+
+func TestDotnetDiscoveryResolvesCaseOnlyProjectReferences(t *testing.T) {
+	r := testutil.NewRepository(t)
+	r.Write("Tools/Compiler/Compiler.csproj", `<Project><ItemGroup><ProjectReference Include="..\..\resources\Core\Core.csproj" /></ItemGroup></Project>`)
+	r.Write("Resources/Core/Core.csproj", `<Project/>`)
+	commit := r.Commit("case-only project reference")
+	repo, err := git.Open(context.Background(), r.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.Tree(context.Background(), commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Discover(context.Background(), repo, tree, model.Config{Discovery: model.Discovery{Adapters: []string{"dotnet"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compiler model.Project
+	for _, candidate := range catalog.Projects {
+		if candidate.Path == "Tools/Compiler" {
+			compiler = candidate
+		}
+	}
+	if len(compiler.Dependencies) != 1 || compiler.Dependencies[0] != "Resources/Core/Core.csproj" {
+		t.Fatalf("case-only project reference was not resolved: %+v", compiler)
+	}
+	if len(catalog.Warnings) != 1 || !strings.Contains(catalog.Warnings[0], "differs only by path case") {
+		t.Fatalf("case-only warning not surfaced: %+v", catalog.Warnings)
+	}
+}
+
+func TestUnresolvedDotnetReferenceWarnsWithoutBlockingIndependentProjects(t *testing.T) {
+	r := testutil.NewRepository(t)
+	r.Write("Broken/Broken.csproj", `<Project><ItemGroup><ProjectReference Include="../Missing/Missing.csproj" /></ItemGroup></Project>`)
+	r.Write("Independent/Independent.csproj", `<Project/>`)
+	commit := r.Commit("unresolved internal reference")
+	repo, err := git.Open(context.Background(), r.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.Tree(context.Background(), commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Discover(context.Background(), repo, tree, model.Config{Discovery: model.Discovery{Adapters: []string{"dotnet"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Projects) != 2 || len(catalog.Warnings) != 1 || !strings.Contains(catalog.Warnings[0], "not a discovered project") {
+		t.Fatalf("unresolved reference did not remain an actionable warning: %+v", catalog)
 	}
 }

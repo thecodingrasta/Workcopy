@@ -4,7 +4,7 @@ Workcopy includes a local stdio MCP server in the CLI executable. The official G
 
 ## Install and connect
 
-Download and extract the executable using the [installation guide](../README.md#install). Go is needed only when building from source. Check your executable:
+Download the directly runnable executable and verify its checksum using the [installation guide](../README.md#install). Go is needed only when building from source. The tracked Windows bootstrap candidate is a legacy ZIP exception; normal release binary assets do not need extraction. Check your executable:
 
 ```powershell
 C:\tools\workcopy.exe version
@@ -151,3 +151,10 @@ Fixtures do not certify arbitrary real monorepos. Run native validation on each 
 The approved optional Node check is `WORKCOPY_NODE_LANE_ACCEPTANCE=1 go test ./tests/acceptance -run '^TestSelectedNodeWorkspaceBuildsAndTestsInsideLane$' -count=1` (set the environment variable separately in PowerShell). It executes tiny offline npm build/test scripts with no installs, includes a selected workspace's dependency, excludes an unrelated package, and verifies lane-local outputs. See contributor instructions for the opt-in .NET restore/build/test check.
 
 References: [current specification](https://modelcontextprotocol.io/specification/2026-07-28), [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio), [official Go SDK](https://github.com/modelcontextprotocol/go-sdk/tree/v1.7.0).
+
+### Host boundary checklist
+
+Workcopy's Git-free lane is not a security sandbox. Before connecting an MCP host, grant the host only the intended source checkout, private workspace root and assigned lane paths through both the product allowlist and operating-system permissions. These controls are independent; MCP startup success does not grant worker filesystem access. Keep the workspace root outside every Git checkout, cloud-synced folder and network share.
+
+Do not use `share` for `bin`, `obj`, generated source, coverage output or an arbitrary installed dependency tree. Shared links are writable and cooperative. Use a unique lane-local output/cache directory unless the package manager's concurrent-write contract, runtime identity and lockfile compatibility have been independently confirmed. A worker with broad host permissions can still write the original checkout or another lane, so retain the controller's allowed paths and human review boundary.
+

@@ -20,7 +20,7 @@ import (
 )
 
 var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
-var assetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_(linux|windows|darwin)_(amd64|arm64)\.(zip|tar\.gz)$`)
+var assetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_(linux|windows|darwin)_(amd64|arm64)(\.exe)?$`)
 var sourceAssetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_source\.tar\.gz$`)
 
 func validVersion(value string) bool { return len(value) <= 64 && releaseVersion.MatchString(value) }
@@ -88,17 +88,8 @@ func release(ctx context.Context, root, version string, nativeOnly bool) error {
 	if err := prepareDist(root); err != nil {
 		return err
 	}
-	notices, err := documentation(root)
-	if err != nil {
-		return err
-	}
-	license, err := os.ReadFile(filepath.Join(runtime.GOROOT(), "LICENSE"))
-	if err != nil {
-		return err
-	}
-	notices = append(notices, archiveEntry{Name: "GO-LICENSE", Data: license, Mode: 0644})
 	sumPath := filepath.Join(root, "dist", "SHA256SUMS")
-	if _, err = os.Lstat(sumPath); err == nil {
+	if _, err := os.Lstat(sumPath); err == nil {
 		return fmt.Errorf("SHA256SUMS exists; clean owned outputs before packaging a release")
 	} else if !os.IsNotExist(err) {
 		return err
@@ -137,14 +128,12 @@ func release(ctx context.Context, root, version string, nativeOnly bool) error {
 			if err != nil {
 				return err
 			}
-			entries := append([]archiveEntry{{Name: name, Data: binary, Mode: 0755}}, notices...)
-			extension := ".tar.gz"
+			filename := fmt.Sprintf("workcopy_%s_%s_%s", version, goos, goarch)
 			if goos == "windows" {
-				extension = ".zip"
+				filename += ".exe"
 			}
-			filename := fmt.Sprintf("workcopy_%s_%s_%s%s", version, goos, goarch, extension)
 			destination := filepath.Join(root, "dist", filename)
-			if err = writeArchive(destination, entries); err != nil {
+			if err = os.WriteFile(destination, binary, 0755); err != nil {
 				return err
 			}
 			if err = addChecksum(filename); err != nil {
@@ -260,38 +249,4 @@ func correspondingSource(ctx context.Context, root, version string) ([]archiveEn
 	info := "Version: " + version + "\nCompiler: " + runtime.Version() + "\nCompiler source: https://go.dev/dl/" + runtime.Version() + ".src.tar.gz\nSet CGO_ENABLED=0 and your GOOS/GOARCH.\nBuild: go build -mod=vendor -trimpath -buildvcs=false -ldflags=\"-X workcopy/internal/cli.Version=" + version + "\" ./cmd/workcopy\n"
 	entries = append(entries, archiveEntry{Name: "BUILDINFO.txt", Data: []byte(info), Mode: 0644})
 	return entries, nil
-}
-func documentation(root string) ([]archiveEntry, error) {
-	result := []archiveEntry{}
-	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(root, name)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-		if entry.IsDir() {
-			top := strings.SplitN(relative, "/", 2)[0]
-			if relative != "." && top != "docs" && top != "examples" && top != "schema" && top != "prebuilt" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		include := relative == "LICENSE" || relative == "COPYRIGHT" || strings.HasSuffix(relative, ".md") || strings.HasPrefix(relative, "examples/") || strings.HasPrefix(relative, "schema/")
-		if !include {
-			return nil
-		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("documentation must be regular files")
-		}
-		body, err := os.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		result = append(result, archiveEntry{Name: relative, Data: body, Mode: 0644})
-		return nil
-	})
-	return result, err
 }

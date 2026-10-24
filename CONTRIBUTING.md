@@ -68,3 +68,21 @@ go test ./tests/acceptance -run '^TestSelectedNodeWorkspaceBuildsAndTestsInsideL
 ```
 
 It runs `npm --offline --ignore-scripts run build` and `run test`. The named scripts execute; pre/post lifecycle hooks are disabled. This proves the fixture's lane-local output and dependency selection, not arbitrary Node repositories.
+
+## Local acceptance environment controls
+
+The canonical `go run ./tools/dev test` and `go run ./tools/dev validate` tasks detect when the process temporary directory is inside a Git checkout and relocate child test processes to a local directory outside Git checkouts. If the host cannot provide a safe location, set `WORKCOPY_TEST_TEMP` to one explicitly. Do not move Workcopy's production workspace root inside a checkout to work around this boundary.
+
+For the opt-in .NET lane acceptance, use a unique lane/cache directory and suppress first-run side effects in the child process. The fixture already applies these controls; real-project handoffs should do the same:
+
+```powershell
+$env:WORKCOPY_DOTNET_LANE_ACCEPTANCE = '1'
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+$env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+$env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+$env:NUGET_PACKAGES = Join-Path $env:TEMP 'workcopy-nuget-agent'
+go test ./tests/acceptance -run '^TestSelectedDotNetProjectBuildsAndTestsInsideLane$' -count=1
+```
+
+These variables prevent telemetry, certificate trust changes and persistent SDK first-run state. They do not grant access to a lane or replace host filesystem permissions.
+

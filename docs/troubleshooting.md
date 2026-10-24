@@ -82,3 +82,8 @@ Inspect `go env GOOS GOARCH CGO_ENABLED CC`. Full validation requires cgo and, o
 ## PowerShell rejects a downloaded development wrapper
 
 Host execution policy may reject an unsigned downloaded `scripts/dev.ps1`. Run the equivalent `go run ./tools/dev setup`, `test`, `build` or `validate` task directly. Workcopy does not require changing machine execution policy; the distributed CLI and its MCP server do not use this wrapper.
+
+## Test temporary directory is inside a Git checkout
+
+The canonical `go run ./tools/dev test` and `go run ./tools/dev validate` tasks detect this condition and relocate child test processes to a local directory outside Git checkouts. If no safe local candidate is available, set `WORKCOPY_TEST_TEMP` to a private local directory and rerun. Do not place a production workspace root inside a checkout; the workspace-boundary rejection is an intentional safety control.
+

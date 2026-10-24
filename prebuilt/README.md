@@ -1,8 +1,10 @@
 # Bootstrap downloads
 
-This directory contains the Windows amd64 **v0.1.0-rc.1 bootstrap candidate** and its matching source archive. It is a pre-release build, not a stable release or a tagged-build attestation. The source archive includes the pinned module source, build scripts and compiler information used to produce the executable.
+This directory contains the Windows amd64 **v0.1.0-rc.1 bootstrap candidate** and its matching source archive. It is a pre-release build, not a stable release or a tagged-build attestation.
 
-Download the executable archive and `SHA256SUMS`. Matching source is available for rebuilding:
+**Release downloads are bare, directly runnable executables.** This tracked bootstrap candidate predates that release contract and is the only ZIP-based exception. The source archive includes the pinned module source, build scripts and compiler information used to produce the executable.
+
+Download the bootstrap executable archive and `SHA256SUMS`. Matching source is available for rebuilding:
 
 - [Windows amd64 executable and documentation](https://github.com/thecodingrasta/workcopy/raw/refs/heads/main/prebuilt/workcopy_v0.1.0-rc.1_windows_amd64.zip)
 - [Matching source with pinned dependencies](https://github.com/thecodingrasta/workcopy/raw/refs/heads/main/prebuilt/workcopy_v0.1.0-rc.1_source.tar.gz)

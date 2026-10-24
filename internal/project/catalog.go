@@ -165,14 +165,32 @@ func Discover(ctx context.Context, repository *git.Repository, tree map[string]g
 			}
 		}
 	}
+	foldedPaths := map[string][]string{}
+	for projectPath := range paths {
+		folded := strings.ToLower(projectPath)
+		foldedPaths[folded] = append(foldedPaths[folded], projectPath)
+	}
+	for folded := range foldedPaths {
+		sort.Strings(foldedPaths[folded])
+	}
 	for index := range catalog.Projects {
 		p := &catalog.Projects[index]
 		for _, target := range references[p.ID] {
-			dependency := paths[path.Dir(target)]
+			projectPath := path.Dir(target)
+			dependency := paths[projectPath]
 			if dependency == "" {
-				return catalog, fmt.Errorf("reference %s from %s is not a discovered project; declare it explicitly", target, p.ID)
+				candidates := foldedPaths[strings.ToLower(projectPath)]
+				if len(candidates) == 1 {
+					projectPath = candidates[0]
+					dependency = paths[projectPath]
+					catalog.Warnings = append(catalog.Warnings, "Project reference "+target+" from "+p.ID+" differs only by path case; resolved to "+projectPath+". Correct the source spelling for case-sensitive filesystems.")
+				} else {
+					catalog.Warnings = append(catalog.Warnings, "Reference "+target+" from "+p.ID+" is not a discovered project; declare it explicitly before building this project.")
+				}
 			}
-			p.Dependencies = append(p.Dependencies, dependency)
+			if dependency != "" {
+				p.Dependencies = append(p.Dependencies, dependency)
+			}
 		}
 		for _, name := range nodeReferences[p.ID] {
 			if dependency := packageNames[name]; dependency != "" && dependency != p.ID {

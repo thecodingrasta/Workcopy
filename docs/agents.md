@@ -171,3 +171,12 @@ go test ./tests/acceptance -run '^TestSelectedDotNetProjectBuildsAndTestsInsideL
 ```
 
 The supplied build and test commands must match the selected project and available SDKs. Workcopy does not identify every build input, run builds, restore packages, or guarantee lane-local output paths for arbitrary build systems. Keep these details explicit in each handoff.
+
+## Windows and Linux/WSL validation guardrails
+
+A lane is a Git-free workflow boundary, not a process or filesystem sandbox. A worker that has ordinary access to the source checkout, another lane, the workspace registry or a shared dependency target can still write those locations. The controller must configure the host allowlist and operating-system permissions independently, and must keep the workspace root private and outside every Git checkout. `doctor` warnings are safety requirements, not optional informational text.
+
+For selected .NET projects, the controller must name the restore permission, feed/cache location, exact project or solution-filter path, and lane-local output directory in the handoff. Restore before `dotnet build --no-restore`; never interpret a no-restore `NETSDK1004` assets-file failure as a Workcopy lane failure. Use a unique `NUGET_PACKAGES` directory when concurrent restore safety is not established. Set `DOTNET_CLI_TELEMETRY_OPTOUT=1`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1` and `DOTNET_GENERATE_ASPNET_CERTIFICATE=false` for non-interactive acceptance runs. These controls avoid SDK first-run side effects but do not grant filesystem access or make dependencies safe to share.
+
+The controller should run `go run ./tools/dev validate` for the canonical Go gate. It relocates child test processes to a safe temporary directory when the host's `TEMP`, `TMP` or `TMPDIR` is inside a Git checkout. If relocation is impossible, set `WORKCOPY_TEST_TEMP` to a private local directory outside all Git checkouts and report that environment fact.
+

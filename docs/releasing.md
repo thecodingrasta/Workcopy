@@ -17,11 +17,11 @@ go run ./tools/dev package v0.1.0-rc.1
 
 Use the actual candidate version. Add `--native` to package only the current OS/architecture. Packaging requires a supported patched Go release, at least Go 1.25.
 
-The task produces six binary archives by default, a matching `_source.tar.gz` archive and `dist/SHA256SUMS`. The source archive includes public source, build scripts, pinned vendored module source and compiler information. Vendoring happens in a private disposable copy; it does not change the repository or global caches. Packaging can download pinned modules when they are absent; use an approved cache for offline builds.
+The task produces six directly runnable per-platform binaries, a matching `_source.tar.gz` archive and `dist/SHA256SUMS`. Binary names are `workcopy_<version>_<os>_<arch>` with `.exe` on Windows. The source archive includes public source, build scripts, pinned vendored module source and compiler information. Vendoring happens in a private disposable copy; it does not change the repository or global caches. Packaging can download pinned modules when they are absent; use an approved cache for offline builds.
 
-All binary archives retain Workcopy's GPL notice, full licence, third-party notices/licences, Go licence and documentation. Publish corresponding source and checksums alongside binaries. Never substitute a source archive from another commit. The source archive rebuilds with `-mod=vendor`; its `BUILDINFO.txt` records the version and command.
+All binary downloads retain Workcopy's GPL notice through the corresponding source release. Publish the source archive and checksums alongside the bare binaries. Never substitute a source archive from another commit. The source archive rebuilds with `-mod=vendor`; its `BUILDINFO.txt` records the version and command.
 
-Cross-build success does not certify target runtime behaviour. Extract candidate archives, verify checksums, exercise `version`, `doctor`, help and representative workflows on native hosts. Do not suppress a platform failure or replace a shared link with a copy.
+Cross-build success does not certify target runtime behaviour. Download candidate binaries directly, verify checksums, make non-Windows files executable where required, and exercise `version`, `doctor`, help and representative workflows on native hosts. Do not suppress a platform failure or replace a shared link with a copy.
 
 ## First push
 
@@ -42,3 +42,8 @@ Enable private vulnerability reporting, protect the default branch, require nati
 ## Maintain
 
 `go run ./tools/dev clean` removes only recognized owned `dist` outputs. It refuses unknown files and directory links; it never cleans user lanes or shared package caches. Review pinned dependency/action updates and rerun affected protocol, safety and packaging checks.
+
+## Vulnerability gate
+
+Do not package or publish from a Go toolchain whose `govulncheck` result reports reachable standard-library or dependency vulnerabilities. The local Windows Go 1.27.2 environment used for development is not release evidence when the current vulnerability database identifies fixes in a later patched toolchain. Run the scan with the exact patched toolchain used for packaging, retain its output with the release evidence, and require the reusable CI vulnerability job to pass before draft creation.
+

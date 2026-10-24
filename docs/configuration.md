@@ -60,3 +60,8 @@ Conditional .NET references are conservatively included where detected. Expressi
 Literal references outside the repository produce warnings and are never followed/copied. They do not block discovery of independent projects. Projects requiring them still need an explicit isolated dependency arrangement or configured package mode before building.
 
 The [JSON schema](../schema/workcopy.schema.json) describes configuration fields. The [examples](../examples/README.md) include a 25-project repository with a ten-project daily profile.
+
+### Discovery warnings and case-sensitive repositories
+
+A literal .NET project reference that does not match a discovered project is reported as a warning rather than aborting the entire catalog. Independent projects remain discoverable, but the affected project may need an explicit project/dependency selection before it can build. A reference that differs only by path case is resolved to the tracked project and reported with a warning; correct the source spelling for Linux/WSL and other case-sensitive filesystems because discovery cannot repair the build tool's own path resolution.
+
