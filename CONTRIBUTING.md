@@ -69,6 +69,23 @@ go test ./tests/acceptance -run '^TestSelectedNodeWorkspaceBuildsAndTestsInsideL
 
 It runs `npm --offline --ignore-scripts run build` and `run test`. The named scripts execute; pre/post lifecycle hooks are disabled. This proves the fixture's lane-local output and dependency selection, not arbitrary Node repositories.
 
+## Filesystem-specific tests
+
+Two environment variables select where some tests run, so a contributor on WSL can reproduce filesystem bugs without a CI round trip:
+
+- `WORKCOPY_UNRELIABLE_MODE_FS=DIR` points at a directory on a filesystem that reports every new file as executable (a `drvfs` mount made without the `metadata` option, or FAT mounted with `fmask=0000`). `TestLaneOnFilesystemThatReportsEveryFileExecutable` then creates its lanes there and refuses to run if the premise is false. Without it the test simulates the symptom with `chmod` on Unix.
+- `WORKCOPY_BENCH_FILES=N` enables `BenchmarkLaneLifecycle`. Set `TEMP`/`TMPDIR` to the filesystem under test.
+
+`WORKCOPY_IO_WORKERS=1` runs bulk file operations sequentially. The per-package test timeout in the canonical tasks is ten minutes; it only guards against hangs, and the slowest package (the acceptance tests) takes about five minutes under `-race` on Windows.
+
+## Settings isolation, interop and coverage guards
+
+Test binaries call `testutil.IsolateSettings()` from `TestMain`, which removes every `WORKCOPY_*` variable and points `WORKCOPY_SETTINGS` at an empty file, so your own preferences never change a result. Use `settings.Builtin()` or an injected `settings.Inputs` in new tests rather than reading the environment.
+
+`tests/interop` needs a Windows machine with a WSL distribution (`WORKCOPY_INTEROP_DISTRO`, default `Debian`) and Git on both sides. Run it from Windows for the Linux-build-on-a-Windows-drive direction and from inside WSL for the `workcopy.exe`-from-WSL direction. It skips elsewhere.
+
+Two guards fail the package when a command or tool has no test: the acceptance package compares the commands in the binary's help with the ones it ran, and the MCP package compares the server's tool list with the tools its tests called. Adding a command or tool without a test fails CI. They apply to full runs, not `-run` selections.
+
 ## Local acceptance environment controls
 
 The canonical `go run ./tools/dev test` and `go run ./tools/dev validate` tasks detect when the process temporary directory is inside a Git checkout and relocate child test processes to a local directory outside Git checkouts. If the host cannot provide a safe location, set `WORKCOPY_TEST_TEMP` to one explicitly. Do not move Workcopy's production workspace root inside a checkout to work around this boundary.

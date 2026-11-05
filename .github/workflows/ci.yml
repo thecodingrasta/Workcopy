@@ -17,10 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macos-latest is Apple silicon and macos-15-intel is x86-64, so both
+        # macOS architectures run natively. Windows arm64 is omitted because Go
+        # has no race detector there (see CONTRIBUTING.md).
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest, macos-15-intel]
         go: ['1.25.x', stable]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -37,7 +40,47 @@ jobs:
           $library = gcc --print-file-name=libsynchronization.a
           if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $library)) { throw 'Compatible MinGW-w64 runtime required for race detection' }
           go env GOOS GOARCH CGO_ENABLED CC
+      - name: Platform facts
+        shell: bash
+        run: |
+          set -eu
+          uname -a
+          go version
+          git --version
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sw_vers
+            /bin/bash --version | head -n 1
+            mount | grep ' on / ' || true
+            # APFS is case-insensitive by default; lane creation must reject
+            # paths that collide there. The validate step exercises that.
+            diskutil info / | grep -E 'File System Personality|Case' || true
+          fi
       - run: go run ./tools/dev validate
+      - name: Shell wrappers under the platform's own bash (macOS ships 3.2)
+        if: runner.os != 'Windows'
+        shell: /bin/bash {0}
+        run: |
+          set -eu
+          /bin/bash ./scripts/dev.sh setup
+          /bin/bash ./scripts/dev.sh build
+          ./dist/workcopy version
+          ./dist/workcopy doctor
+          ./dist/workcopy settings --settings "$RUNNER_TEMP/none.env" --init --dry-run
+      - name: Lifecycle timing (informational, never fails the build)
+        shell: bash
+        env:
+          WORKCOPY_BENCH_FILES: '1500'
+        run: |
+          go test ./internal/workspace -run '^$' -bench LaneLifecycle -benchtime=1x -timeout 10m | tee -a "$GITHUB_STEP_SUMMARY" || true
+      - name: Per-call filesystem costs (informational, never fails the build)
+        shell: bash
+        run: |
+          {
+            echo "### Filesystem call costs on ${{ runner.os }} ${{ runner.arch }}"
+            echo '```'
+            go run ./tools/fsbench "$RUNNER_TEMP"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY" || true
       - name: Package native CI candidate with corresponding source
         if: matrix.go == 'stable' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: go run ./tools/dev package v0.1.0-ci.${{ github.run_number }} --native
@@ -55,9 +98,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Both macOS architectures run the .NET and Node lane fixtures natively.
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       WORKCOPY_NODE_LANE_ACCEPTANCE: '1'
       WORKCOPY_DOTNET_LANE_ACCEPTANCE: '1'
@@ -79,6 +123,44 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Selected .NET and offline Node lane build/test
         run: go test ./tests/acceptance -run '^(TestSelectedDotNetProjectBuildsAndTestsInsideLane|TestSelectedNodeWorkspaceBuildsAndTestsInsideLane)$' -count=1 -timeout=180s
+  # Reproduces the WSL "every file is executable" drvfs symptom (WC-001/WC-004)
+  # on a hosted runner, and checks that the bulk-I/O worker pool changes nothing
+  # about results. A real WSL distribution is not available on hosted runners;
+  # path-direction and drive-warning logic is covered by ordinary unit tests.
+  linux-filesystems:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Mount a FAT volume that reports every file as executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/fat.img"
+          mountpoint="$RUNNER_TEMP/fat"
+          command -v mkfs.vfat >/dev/null || sudo apt-get install -y --no-install-recommends dosfstools
+          truncate -s 256M "$image"
+          mkfs.vfat "$image" >/dev/null
+          mkdir -p "$mountpoint"
+          sudo mount -o "loop,uid=$(id -u),gid=$(id -g),fmask=0000,dmask=0000,quiet" "$image" "$mountpoint"
+          printf probe > "$mountpoint/probe"
+          mode="$(stat -c %a "$mountpoint/probe")"
+          echo "mode of a newly created file on the FAT volume: $mode"
+          # Fail loudly if the premise of the next step is not true.
+          test "$mode" = 777
+          echo "WORKCOPY_UNRELIABLE_MODE_FS=$mountpoint" >> "$GITHUB_ENV"
+      - name: Lanes, reviews and cleanup on the mode-unreliable volume
+        run: go test ./internal/workspace -run '^TestLaneOnFilesystemThatReportsEveryFileExecutable$' -count=1 -v
+      - name: Strictly sequential bulk I/O gives identical results
+        env:
+          WORKCOPY_IO_WORKERS: '1'
+        run: go test ./internal/state ./internal/workspace -count=1 -timeout=600s
   vulnerabilities:
     runs-on: ubuntu-latest
     timeout-minutes: 10

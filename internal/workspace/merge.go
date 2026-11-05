@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
 	"workcopy/internal/git"
 	"workcopy/internal/model"
@@ -108,7 +109,8 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	if err != nil {
 		return report, err
 	}
-	if err = e.validateAttributes(ctx, commit, names); err != nil {
+	plan, err := e.checkoutPlan(ctx, commit, names)
+	if err != nil {
 		return report, err
 	}
 	id, err := model.ID()
@@ -126,7 +128,7 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 		if readErr != nil {
 			return report, readErr
 		}
-		version, versionErr := entryVersion(tree[filename], body)
+		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}
@@ -138,7 +140,7 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 		receipt.Files[filename] = version
 	}
 	for _, change := range delta {
-		version, body, readErr := state.ReadVersion(opened.root, change.Path, opened.snapshot.Baseline.Files[change.Path], opened.snapshot.Manifest.RespectExecutableBits)
+		version, body, readErr := state.ReadVersion(opened.root, change.Path, opened.baselineFor(change.Path), opened.snapshot.Manifest.RespectExecutableBits)
 		if readErr != nil {
 			return report, readErr
 		}
@@ -255,66 +257,30 @@ func (e *Engine) finishReview(ctx context.Context, store *state.Store, receipt m
 	defer reader.Close()
 	// Only missing files or exact prior writes are resumable. External review
 	// edits are never overwritten to make a receipt appear complete.
-	err = root.Walk(func(name string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if name == "." || name == ".git" || entry.IsDir() {
-			return nil
-		}
-		version, ok := receipt.Files[name]
-		if !ok {
-			return model.Fail(3, "review-changed", "Unexpected file in interrupted review: "+name)
-		}
-		current, _, readErr := state.ReadVersion(root, name, version, snapshot.Manifest.RespectExecutableBits)
-		if readErr != nil {
-			return readErr
-		}
-		if !current.Equal(version) {
-			return model.Fail(3, "review-changed", "Edited file in interrupted review: "+name)
-		}
-		return nil
-	})
+	present, err := reviewFilesOnDisk(root, receipt, "Unexpected file in interrupted review: ")
 	if err != nil {
 		return err
 	}
-	names := []string{}
-	for name := range receipt.Files {
-		names = append(names, name)
+	if err = compareReviewFiles(ctx, root, receipt, present, snapshot.Manifest.RespectExecutableBits, "Edited file in interrupted review: "); err != nil {
+		return err
 	}
-	sort.Strings(names)
-	for _, name := range names {
-		if err = ctx.Err(); err != nil {
-			return err
+	onDisk := make(map[string]bool, len(present))
+	for _, name := range present {
+		onDisk[name] = true
+	}
+	missing := []string{}
+	for name := range receipt.Files {
+		if !onDisk[name] {
+			missing = append(missing, name)
 		}
-		version := receipt.Files[name]
-		current, _, readErr := state.ReadVersion(root, name, version, snapshot.Manifest.RespectExecutableBits)
-		if readErr != nil {
-			return readErr
-		}
-		if current.Equal(version) {
-			continue
-		}
-		if current.Exists() {
-			return model.Fail(3, "review-changed", "Review file changed during materialization")
-		}
-		body, bodyErr := versionBody(reader, store, version)
-		if bodyErr != nil {
-			return bodyErr
-		}
-		if version.Kind == model.Symlink {
-			err = root.ReplaceSymlink(name, string(body), false)
-		} else {
-			err = root.WriteAtomic(name, body, os.FileMode(version.Mode))
-		}
-		if err != nil {
-			return err
-		}
+	}
+	sort.Strings(missing)
+	if err = e.materializeReview(ctx, root, reader, store, receipt, missing); err != nil {
+		return err
 	}
 	if err = e.verifyReviewFiles(receipt, snapshot.Manifest.RespectExecutableBits); err != nil {
 		return err
-	}
-	// A missing index is expected for a newly added --no-checkout worktree.
+	} // A missing index is expected for a newly added --no-checkout worktree.
 	// An existing index must still represent the base; replay never erases staging.
 	indexPath, indexErr := e.Repository.Run(ctx, receipt.Path, nil, "rev-parse", "--path-format=absolute", "--git-path", "index")
 	if indexErr != nil {
@@ -396,33 +362,88 @@ func (e *Engine) verifyReviewFiles(receipt model.Review, respect bool) error {
 		return err
 	}
 	defer root.Close()
-	seen := map[string]bool{}
-	err = root.Walk(func(name string, entry fs.DirEntry, walkErr error) error {
+	present, err := reviewFilesOnDisk(root, receipt, "Unexpected review file, including ignored files: ")
+	if err != nil {
+		return err
+	}
+	if err = compareReviewFiles(context.Background(), root, receipt, present, respect, "Review content changed: "); err != nil {
+		return err
+	}
+	if len(present) != len(receipt.Files) {
+		return model.Fail(3, "review-changed", "Review files were deleted")
+	}
+	return nil
+}
+
+// reviewFilesOnDisk lists the files in a review worktree and rejects any that
+// the receipt does not account for. The Git metadata entry is ignored.
+func reviewFilesOnDisk(root *fsops.Root, receipt model.Review, unexpected string) ([]string, error) {
+	names := []string{}
+	err := root.Walk(func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if name == "." || name == ".git" || entry.IsDir() {
 			return nil
 		}
-		expected, ok := receipt.Files[name]
-		if !ok {
-			return model.Fail(3, "review-changed", "Unexpected review file, including ignored files: "+name)
+		if _, ok := receipt.Files[name]; !ok {
+			return model.Fail(3, "review-changed", unexpected+name)
 		}
-		actual, _, readErr := state.ReadVersion(root, name, expected, respect)
-		if readErr != nil {
-			return readErr
-		}
-		if !expected.Equal(actual) {
-			return model.Fail(3, "review-changed", "Review content changed: "+name)
-		}
-		seen[name] = true
+		names = append(names, name)
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	if len(seen) != len(receipt.Files) {
-		return model.Fail(3, "review-changed", "Review files were deleted")
+	return names, err
+}
+
+// compareReviewFiles requires each named file to equal its receipt version.
+func compareReviewFiles(ctx context.Context, root *fsops.Root, receipt model.Review, names []string, respect bool, changed string) error {
+	return fsops.Parallel(ctx, len(names), func(index int) error {
+		name := names[index]
+		expected := receipt.Files[name]
+		actual, _, err := state.ReadVersion(root, name, expected, respect)
+		if err != nil {
+			return err
+		}
+		if !expected.Equal(actual) {
+			return model.Fail(3, "review-changed", changed+name)
+		}
+		return nil
+	})
+}
+
+// materializeReview writes the named receipt files into the review worktree.
+// Blobs come from Git through one sequential pipe, one bounded chunk at a time,
+// and are written concurrently.
+func (e *Engine) materializeReview(ctx context.Context, root *fsops.Root, reader *git.Reader, store *state.Store, receipt model.Review, names []string) error {
+	const chunkFiles, chunkBytes = 256, 32 << 20
+	for start := 0; start < len(names); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		reportProgress(ctx, "Preparing review files", start, len(names))
+		bodies := [][]byte{}
+		var total int64
+		end := start
+		for end < len(names) && end-start < chunkFiles && (end == start || total < chunkBytes) {
+			body, err := versionBody(reader, store, receipt.Files[names[end]])
+			if err != nil {
+				return err
+			}
+			bodies = append(bodies, body)
+			total += int64(len(body))
+			end++
+		}
+		if err := fsops.Parallel(ctx, end-start, func(index int) error {
+			name := names[start+index]
+			version := receipt.Files[name]
+			if version.Kind == model.Symlink {
+				return root.ReplaceSymlink(name, string(bodies[index]), false)
+			}
+			return root.WriteAtomic(name, eol.ToLane(bodies[index], version.Eol), os.FileMode(version.Mode))
+		}); err != nil {
+			return err
+		}
+		start = end
 	}
 	return nil
 }

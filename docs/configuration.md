@@ -33,7 +33,7 @@ Files at the repository root are included by default, then explicit exclusions a
 
 Without a profile or explicit project selection, all tracked source is selected. With a committed default profile, `create` uses that profile. `--all` bypasses the default profile; it cannot be combined with `--profile` or `--project`.
 
-`--project` accepts a configured/discovered ID or a literal directory path. It may be repeated. A named profile and explicit projects are additive. `expand` adds projects or paths without replacing edited files. Repeating an expansion that adds no source returns exit code 4.
+`--project` accepts a configured/discovered ID or a literal directory path. It may be repeated. A profile named with `--profile` and explicit `--project` values are additive. The committed `defaultProfile` is applied only when neither is given: `create --project X` selects X alone, not X plus the default profile. Add `--profile NAME` to combine them. `expand` adds projects or paths without replacing edited files. Repeating an expansion that adds no source returns exit code 4.
 
 A directory matching one known project resolves to that project's identity and enforces its dependency closure, just like its ID. Ambiguous directories require explicit IDs. Other paths remain generic source selections; they cannot infer arbitrary build relationships.
 
@@ -41,7 +41,19 @@ Patterns use `/` on every platform. `*`, `?` and character classes match within 
 
 `dependencyClosure: "strict"` requires dependencies to be explicitly selected. `"include"` adds known dependencies transitively. Unknown relationships are not guessed. A profile excluding an essential shared import may still fail to build.
 
+`dependencyClosure: "include"` is a property of a profile. A lane built from ad-hoc `--project` values always uses strict closure and reports `missing-project-dependency` until the dependencies are named. Inside a lane, commands such as `share` and `recover` infer the lane and reject a positional lane name; give `--name` or omit it.
+
 A lane stores its resolved configuration and selection. Editing the repository configuration does not silently change an existing lane. Create a new lane to apply a new profile definition.
+
+## Cleaning up build output
+
+An owner-supplied configuration (`create --config FILE`, or the MCP server's `--config`) may declare which untracked paths `destroy` is allowed to discard without `--force`:
+
+```json
+{ "schemaVersion": 1, "destroy": { "discard": ["**/bin/**", "**/obj/**", ".vs/**"] } }
+```
+
+This applies only to files that are not tracked source, so an edit to a tracked file under a `bin` directory still blocks deletion. A committed `.workcopy.json` cannot grant it (a repository must not decide what is safe to throw away), and Workcopy says so when it ignores one. Patterns that match everything (`**`, `*`, `.`) or are absolute or contain `..` are rejected.
 
 ## Discovery
 
@@ -61,7 +73,17 @@ Literal references outside the repository produce warnings and are never followe
 
 The [JSON schema](../schema/workcopy.schema.json) describes configuration fields. The [examples](../examples/README.md) include a 25-project repository with a ten-project daily profile.
 
-### Discovery warnings and case-sensitive repositories
+### Cleaning up build output
+
+An owner-supplied configuration (`create --config FILE`, or the MCP server's `--config`) may declare which untracked paths `destroy` is allowed to discard without `--force`:
+
+```json
+{ "schemaVersion": 1, "destroy": { "discard": ["**/bin/**", "**/obj/**", ".vs/**"] } }
+```
+
+This applies only to files that are not tracked source, so an edit to a tracked file under a `bin` directory still blocks deletion. A committed `.workcopy.json` cannot grant it (a repository must not decide what is safe to throw away), and Workcopy says so when it ignores one. Patterns that match everything (`**`, `*`, `.`) or are absolute or contain `..` are rejected.
+
+## Discovery warnings and case-sensitive repositories
 
 A literal .NET project reference that does not match a discovered project is reported as a warning rather than aborting the entire catalog. Independent projects remain discoverable, but the affected project may need an explicit project/dependency selection before it can build. A reference that differs only by path case is resolved to the tracked project and reported with a warning; correct the source spelling for Linux/WSL and other case-sensitive filesystems because discovery cannot repair the build tool's own path resolution.
 

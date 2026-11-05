@@ -9,8 +9,11 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 
+	"workcopy/internal/fsops"
 	"workcopy/internal/model"
+	"workcopy/internal/settings"
 	"workcopy/internal/workspace"
 )
 
@@ -56,8 +59,23 @@ func Run(ctx context.Context, input []string, stdout, stderr io.Writer) int {
 		}
 		return writeResult(stdout, stderr, jsonMode, workspace.Report{Command: "version", Message: "Workcopy " + Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ", " + runtime.Version() + ")"}, nil)
 	}
-	report, operationErr := execute(ctx, parsed)
+	resolved, loadErr := loadSettings(parsed)
+	if loadErr != nil {
+		return writeResult(stdout, stderr, jsonMode, workspace.Report{Command: parsed.command}, loadErr)
+	}
+	if resolved.Bool(settings.JSON) && !parsed.boolean("json") {
+		jsonMode = true
+	}
+	report, operationErr := execute(ctx, parsed, resolved)
 	report.Command = parsed.command
+	if report.Review != nil && !parsed.boolean("include-files") {
+		// The per-file inventory of a review can run to megabytes. Leave it out
+		// unless asked, as the MCP server always does, so an agent reading this
+		// output is not flooded.
+		summary := *report.Review
+		summary.Files = map[string]model.FileVersion{}
+		report.Review = &summary
+	}
 	return writeResult(stdout, stderr, jsonMode, report, operationErr)
 }
 
@@ -112,7 +130,40 @@ func writeResult(stdout, stderr io.Writer, jsonMode bool, report workspace.Repor
 	if report.Review != nil {
 		fmt.Fprintf(stdout, "Review: %s\nReceipt: %s (%s)\n", report.Review.Path, report.Review.ID, report.Review.State)
 	}
+	if context := report.AgentContext; context != nil {
+		if report.Command == "agent-context" {
+			if len(context.Agents) > 0 {
+				fmt.Fprintf(stdout, "Agents: %s (%s)\n", strings.Join(context.Agents, ", "), context.AgentsSource)
+			}
+			if len(context.NotSelected) > 0 {
+				fmt.Fprintf(stdout, "Present but not served: %s\n", strings.Join(context.NotSelected, ", "))
+			}
+			for _, skipped := range context.Skipped {
+				fmt.Fprintf(stderr, "Not copied: %s (%s)\n", skipped.Path, skipped.Reason)
+			}
+		}
+		for _, candidate := range context.Candidates {
+			fmt.Fprintf(stdout, "Candidate: %s (%d files, %s); add it with WORKCOPY_AGENT_CONTEXT_INCLUDE to copy it\n", candidate.Path, candidate.Files, candidate.Hint)
+		}
+		if report.Command == "agent-context" {
+			for _, file := range context.Included {
+				note := ""
+				if file.Sensitive {
+					note = " (may contain credentials)"
+				}
+				fmt.Fprintf(stdout, "%-10s %s [%s]%s\n", "include", file.Path, file.Source, note)
+			}
+			fmt.Fprintln(stdout, context.Guidance)
+		}
+	}
+	for _, entry := range report.Settings {
+		fmt.Fprintf(stdout, "%-40s %-24s [%s]\n", entry.Key, strings.Join(entry.Values, ";"), entry.Source)
+	}
 	for _, item := range report.Workspaces {
+		if item.Phase != "" && item.Phase != "ready" {
+			fmt.Fprintf(stdout, "%s\t%s\t[%s]\n", item.Name, item.Path, item.Phase)
+			continue
+		}
 		fmt.Fprintf(stdout, "%s\t%s\n", item.Name, item.Path)
 	}
 	for _, warning := range report.Warnings {
@@ -161,15 +212,36 @@ func (w *checkedWriter) Write(body []byte) (int, error) {
 	return n, err
 }
 
-func execute(ctx context.Context, a arguments) (workspace.Report, error) {
+// loadSettings resolves the user's preferences: flags, then environment, then the
+// settings file, then built-in defaults.
+func loadSettings(a arguments) (*settings.Resolved, error) {
+	flags := map[string][]string{}
+	for _, d := range settings.Definitions {
+		if d.Flag != "" && len(a.values[d.Flag]) > 0 {
+			flags[d.Key] = a.values[d.Flag]
+		}
+	}
+	inputs := settings.DefaultInputs(a.value("settings"), flags)
+	inputs.AllowMissing = a.command == "settings" && a.boolean("init")
+	resolved, err := settings.Load(inputs)
+	if err != nil {
+		return nil, err
+	}
+	if err = resolved.ExportProcessEnvironment(os.LookupEnv, os.Setenv); err != nil {
+		return nil, err
+	}
+	return resolved, nil
+}
+
+func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (workspace.Report, error) {
 	empty := workspace.Report{Command: a.command}
 	allowed := map[string]string{
-		"create": "branch profile project config all share trust-shared dependency-identity",
-		"expand": "project", "status": "", "sync": "", "list": "", "destroy": "force",
+		"create": "branch profile project config all share trust-shared dependency-identity agent",
+		"expand": "project", "status": "", "sync": "agent", "list": "", "destroy": "force",
 		"resolve": "use-local use-upstream delete from-file expect-conflict expect-local",
-		"merge":   "commit approve review message no-commit", "content": "side offset limit",
-		"recover": "", "share": "path target dependency-identity trust-shared", "unshare": "path",
-		"solution": "solution", "discover": "config", "doctor": "", "legacy": "",
+		"merge":   "commit approve review message no-commit include-files", "content": "side offset limit",
+		"recover": "abandon-review", "share": "path target dependency-identity trust-shared", "unshare": "path",
+		"solution": "solution", "discover": "config", "doctor": "", "legacy": "", "settings": "init agent", "agent-context": "refresh agent",
 	}
 	flags, known := allowed[a.command]
 	if !known {
@@ -177,6 +249,16 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 	}
 	if err := a.allowed(flags); err != nil {
 		return empty, usage(err)
+	}
+	for _, flag := range []string{"repo", "root", "workspace", "config", "target"} {
+		if value := a.value(flag); value != "" {
+			if err := fsops.CheckNativePath(value); err != nil {
+				return empty, err
+			}
+		}
+	}
+	if a.command == "settings" {
+		return showSettings(a, resolved)
 	}
 	if a.command == "doctor" {
 		return doctor(ctx, a)
@@ -212,6 +294,13 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 			name = current.Name
 		}
 	}
+	// Preferences fill in only what the command line and the lane did not.
+	if repository == "" {
+		repository = resolved.String(settings.Repo)
+	}
+	if root == "" {
+		root = resolved.String(settings.Root)
+	}
 	if repository == "" {
 		repository = "."
 	}
@@ -219,11 +308,16 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 	if err != nil {
 		return empty, err
 	}
+	engine.Settings = resolved
+	configFile := a.value("config")
+	if configFile == "" {
+		configFile = resolved.String(settings.Config)
+	}
 	positional := append([]string(nil), a.positionals...)
 	if a.command != "list" && a.command != "discover" && name == "" && len(positional) > 0 {
 		name, positional = positional[0], positional[1:]
 	}
-	if a.command != "list" && a.command != "discover" && name == "" {
+	if a.command != "list" && a.command != "discover" && a.command != "agent-context" && name == "" {
 		return empty, usage(errors.New("specify a lane name, --name, or run from inside a Workcopy lane"))
 	}
 	dryRun := a.boolean("dry-run")
@@ -232,7 +326,7 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 		if len(positional) != 0 {
 			return empty, usage(errors.New("create takes one lane name; select projects with repeated --project"))
 		}
-		return engine.Create(ctx, name, workspace.CreateOptions{Branch: a.value("branch"), Profile: a.value("profile"), Projects: a.values["project"], All: a.boolean("all"), ConfigPath: a.value("config"), Shares: a.values["share"], TrustShared: a.boolean("trust-shared"), DependencyIdentity: a.value("dependency-identity")}, dryRun)
+		return engine.Create(ctx, name, workspace.CreateOptions{Branch: a.value("branch"), Profile: a.value("profile"), Projects: a.values["project"], All: a.boolean("all"), ConfigPath: configFile, Shares: a.values["share"], TrustShared: a.boolean("trust-shared"), DependencyIdentity: a.value("dependency-identity")}, dryRun)
 	case "expand":
 		return engine.Expand(ctx, name, append(a.values["project"], positional...), dryRun)
 	case "resolve":
@@ -275,7 +369,7 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 		}
 		return engine.Merge(ctx, name, workspace.MergeOptions{Commit: a.boolean("commit"), Approve: a.boolean("approve"), ReviewID: a.value("review"), Message: a.value("message")}, dryRun)
 	case "recover":
-		return engine.Recover(ctx, name, dryRun)
+		return engine.RecoverWith(ctx, name, workspace.RecoverOptions{AbandonReview: a.boolean("abandon-review")}, dryRun)
 	case "share":
 		return engine.Share(ctx, name, a.value("path"), a.value("target"), a.value("dependency-identity"), a.boolean("trust-shared"), dryRun)
 	case "unshare":
@@ -283,7 +377,9 @@ func execute(ctx context.Context, a arguments) (workspace.Report, error) {
 	case "solution":
 		return engine.Solution(ctx, name, a.value("solution"), dryRun)
 	case "discover":
-		return engine.DiscoverProjects(ctx, a.value("config"))
+		return engine.DiscoverProjects(ctx, configFile)
+	case "agent-context":
+		return engine.AgentContext(ctx, name, a.boolean("refresh"), dryRun)
 	}
 	return empty, usage(errors.New("unhandled command"))
 }
@@ -304,32 +400,39 @@ const helpText = `Workcopy - lean Git-free working lanes and review-first promot
 Usage:
 	workcopy mcp [--repo DIRECTORY] [--root WORKSPACE-ROOT]
 	             [--config OWNER-CONFIG-FILE]
-	             [--max-lanes N] [--reserve-mib N]
+	             [--max-lanes N] [--reserve-mib N] [--tool-timeout DURATION]
 	             [--allow-share-target DIRECTORY ...]
   workcopy create NAME [--branch REF] [--profile NAME | --all]
                       [--project ID-OR-PATH ...] [--config FILE] [--dry-run]
+                      [--agent TOOL ...]
   workcopy expand NAME PROJECT-OR-PATH ...
   workcopy status NAME
-  workcopy sync NAME [--dry-run]
+  workcopy sync NAME [--dry-run] [--agent TOOL ...]
   workcopy resolve NAME PATH --expect-conflict TOKEN
                    (--use-local | --use-upstream | --delete | --from-file FILE)
-  workcopy merge NAME [--dry-run]
+  workcopy merge NAME [--dry-run] [--include-files]
   workcopy merge NAME --commit --approve --review RECEIPT --message MESSAGE
   workcopy content NAME TOKEN --side base|local|upstream [--offset N] [--limit N]
   workcopy share NAME --path PATH --target DIRECTORY --trust-shared
                       --dependency-identity IDENTITY [--dry-run]
   workcopy unshare NAME --path PATH [--dry-run]
-  workcopy recover NAME [--dry-run]
+  workcopy recover NAME [--abandon-review] [--dry-run]
   workcopy destroy NAME [--force] [--dry-run]
   workcopy list
   workcopy discover [--config FILE]
   workcopy solution NAME --solution FILE.sln [--dry-run]
+  workcopy settings [--init] [--settings FILE]
+  workcopy agent-context [NAME] [--refresh] [--dry-run] [--agent TOOL ...]
   workcopy doctor
   workcopy legacy --workspace OLD-LANE
   workcopy version
 
 Global options: --repo DIRECTORY --root WORKSPACE-ROOT --name NAME
-                --workspace LANE-DIRECTORY --json --help
+                --workspace LANE-DIRECTORY --settings FILE --json --help
+
+Preferences (root, owner config, Git program, MCP limits, timeouts, agent
+context) live in one settings file; flags override environment variables,
+which override the file. Run "workcopy settings" to see every value.
 
 Inside a lane, repository/root/name are inferred. Explicit flags win.
 No command fetches, pushes, changes the main checkout, runs a package restore,

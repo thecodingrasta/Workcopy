@@ -8,11 +8,15 @@ import (
 	"runtime"
 	"strings"
 
+	"workcopy/internal/fsops"
 	"workcopy/internal/model"
 	"workcopy/internal/workspace"
 )
 
 func directoryScope(directory string, scope Scope) (Scope, error) {
+	if err := fsops.CheckNativePath(directory); err != nil {
+		return Scope{}, err
+	}
 	if !filepath.IsAbs(directory) || scope.Repo != "" || scope.Root != "" {
 		return Scope{}, model.Fail(2, "invalid-directory-scope", "Pass an absolute directory alone, or use repo/root explicitly")
 	}
@@ -40,6 +44,13 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 			return s, nil
 		}
 		return nil, model.Fail(2, "repository-required", "Pass repo as the absolute checkout path to workcopy_bootstrap, then retain the returned repo/root scope for lane calls")
+	}
+	for _, value := range []string{scope.Repo, scope.Root} {
+		if value != "" {
+			if err := fsops.CheckNativePath(value); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if !filepath.IsAbs(repo) || (scope.Root != "" && !filepath.IsAbs(scope.Root)) {
 		return nil, model.Fail(2, "absolute-scope-required", "repo and root must be absolute local paths")
@@ -79,6 +90,7 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 			}
 		}
 	}
+	engine.Settings = s.opts.Settings
 	selected := &Server{engine: engine, opts: s.opts}
 	if sameDefault {
 		selected.configData, selected.configErr = s.configData, s.configErr

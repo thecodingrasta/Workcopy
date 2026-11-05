@@ -16,6 +16,22 @@ import (
 	"workcopy/internal/state"
 )
 
+// requireGitIdentity checks, before any object or receipt is written, that Git
+// can name an author and committer. A fresh machine, container or WSL distro
+// often has neither, and the failure should say how to fix it and leave the
+// prepared review untouched so the same receipt can be approved afterwards.
+func (e *Engine) requireGitIdentity(ctx context.Context, directory string) error {
+	for _, variable := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
+		if _, err := e.Repository.Run(ctx, directory, nil, "var", variable); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return model.Fail(3, "git-identity-missing", "Git has no author/committer identity, so the review cannot be committed. Set one with git config --global user.name \"Your Name\" and git config --global user.email you@example.com, or export GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL for the Workcopy process. The prepared review is unchanged; approve the same receipt again afterwards.")
+		}
+	}
+	return nil
+}
+
 func (e *Engine) commitReview(ctx context.Context, name string, options MergeOptions, dryRun bool) (Report, error) {
 	report := Report{Command: "merge"}
 	if len(options.Message) > 65536 || strings.ContainsRune(options.Message, 0) || !utf8.ValidString(options.Message) {
@@ -58,6 +74,9 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	}
 	if _, err = e.Repository.Run(ctx, receipt.Path, nil, "diff-index", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", receipt.BaseCommit, "--"); err != nil {
 		return report, model.Fail(3, "review-index-changed", "Review staging changed; Workcopy will not overwrite it")
+	}
+	if err = e.requireGitIdentity(ctx, receipt.Path); err != nil {
+		return report, err
 	}
 	report.Plan = &Plan{Action: "commit-review", Effects: []string{"Commit exactly the approved review using an isolated Git index", "Advance only the detached review HEAD; never main or a remote"}}
 	if dryRun {

@@ -125,6 +125,11 @@ type FileVersion struct {
 	Hash     string   `json:"sha256,omitempty"`
 	ObjectID string   `json:"objectId,omitempty"`
 	Size     int64    `json:"size,omitempty"`
+	// Eol marks a text file whose carriage returns are not content: "lf" or
+	// "crlf" (the form written to the lane). Hash and Size always describe the
+	// normalised (LF) bytes Git stores, so line endings never cause a change or
+	// a merge conflict. Empty means bytes are compared exactly. Equal ignores it.
+	Eol string `json:"eol,omitempty"`
 }
 
 func Version(kind FileKind, mode uint32, body []byte) FileVersion {
@@ -156,12 +161,20 @@ type Profile struct {
 type Discovery struct {
 	Adapters []string `json:"adapters,omitempty"`
 }
+
+// DestroyPolicy lists local-only files (never tracked source) that deletion may
+// discard without --force, typically build output. Only an owner-supplied
+// configuration is trusted to grant this; a committed .workcopy.json is not.
+type DestroyPolicy struct {
+	Discard []string `json:"discard,omitempty"`
+}
 type Config struct {
 	SchemaVersion  int                `json:"schemaVersion"`
 	DefaultProfile string             `json:"defaultProfile,omitempty"`
 	Discovery      Discovery          `json:"discovery,omitempty"`
 	Projects       []Project          `json:"projects,omitempty"`
 	Profiles       map[string]Profile `json:"profiles,omitempty"`
+	Destroy        *DestroyPolicy     `json:"destroy,omitempty"`
 }
 type Selection struct {
 	All      bool     `json:"all"`
@@ -198,24 +211,48 @@ type Conflict struct {
 	Upstream       FileVersion `json:"upstream"`
 	UpstreamCommit string      `json:"upstreamCommit"`
 }
+
+// ContextFile records an agent instruction file copied from the main checkout.
+// Hash is the hash of the bytes as copied, so a later refresh can tell an
+// untouched copy from one a person or agent edited in the lane.
+type ContextFile struct {
+	Path   string `json:"path"`
+	Hash   string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Source string `json:"source,omitempty"`
+	// Sensitive marks a copy the owner accepted may hold credentials.
+	Sensitive bool `json:"sensitive,omitempty"`
+}
 type Manifest struct {
-	SchemaVersion         int       `json:"schemaVersion"`
-	ID                    string    `json:"id"`
-	Name                  string    `json:"name"`
-	WorkspacePath         string    `json:"workspacePath"`
-	RepositoryRoot        string    `json:"repositoryRoot"`
-	CommonGitDir          string    `json:"commonGitDir"`
-	WorkRoot              string    `json:"workRoot"`
-	Branch                string    `json:"branch"`
-	SyncedCommit          string    `json:"syncedCommit"`
-	PendingCommit         string    `json:"pendingCommit,omitempty"`
-	Generation            uint64    `json:"generation"`
-	Phase                 string    `json:"phase"`
-	RespectExecutableBits bool      `json:"respectExecutableBits"`
-	Config                Config    `json:"config"`
-	Selection             Selection `json:"selection"`
-	Mappings              []Mapping `json:"mappings,omitempty"`
-	Reviews               []Review  `json:"reviews,omitempty"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	WorkspacePath         string `json:"workspacePath"`
+	RepositoryRoot        string `json:"repositoryRoot"`
+	CommonGitDir          string `json:"commonGitDir"`
+	WorkRoot              string `json:"workRoot"`
+	Branch                string `json:"branch"`
+	SyncedCommit          string `json:"syncedCommit"`
+	PendingCommit         string `json:"pendingCommit,omitempty"`
+	Generation            uint64 `json:"generation"`
+	Phase                 string `json:"phase"`
+	RespectExecutableBits bool   `json:"respectExecutableBits"`
+	// OwnerConfig records that Config came from a file the owner chose
+	// (--config, or the MCP server's --config) rather than from the repository.
+	OwnerConfig bool      `json:"ownerConfig,omitempty"`
+	Config      Config    `json:"config"`
+	Selection   Selection `json:"selection"`
+	Mappings    []Mapping `json:"mappings,omitempty"`
+	Reviews     []Review  `json:"reviews,omitempty"`
+	// AgentContext lists copied agent instruction files. They are not source:
+	// they are excluded from status, reviews and promotion, and destroy
+	// discards them.
+	AgentContext []ContextFile `json:"agentContext,omitempty"`
+	// ContextAgents records which agent tools this lane serves (tool keys, or
+	// "all"), settled when the lane was created, so every refresh stays
+	// consistent. Empty on lanes made before the selection existed, which
+	// received every tool.
+	ContextAgents []string `json:"contextAgents,omitempty"`
 }
 type Baseline struct {
 	Files map[string]FileVersion `json:"files"`

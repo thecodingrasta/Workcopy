@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
 	"workcopy/internal/git"
 	"workcopy/internal/model"
@@ -121,7 +122,17 @@ func (e *Engine) Resolve(ctx context.Context, name, relative string, options Res
 		if current.Kind == model.Regular {
 			mode = current.Mode
 		}
+		// A supplied file may carry the editor's line endings; store the same
+		// normalised form Git would, and write it back in the lane's form.
+		token := conflict.Upstream.Eol
+		if !conflict.Upstream.Exists() {
+			token = current.Eol
+		}
+		if token != eol.Raw {
+			body = eol.Normalize(body)
+		}
 		desired = model.Version(model.Regular, mode, body)
+		desired.Eol = token
 	}
 	if desired.Kind == model.Symlink {
 		if err = validateLink(relative, string(body)); err != nil {
@@ -134,7 +145,12 @@ func (e *Engine) Resolve(ctx context.Context, name, relative string, options Res
 		return report, nil
 	}
 	next := newGeneration(opened.snapshot)
-	next.Baseline.Files[relative] = conflict.Upstream
+	accepted := conflict.Upstream
+	if accepted.Exists() && accepted.Eol == eol.Raw && current.Equal(desired) {
+		// The lane file is left as it is, so keep reading it in its own form.
+		accepted.Eol = current.Eol
+	}
+	next.Baseline.Files[relative] = accepted
 	next.Conflicts = append(next.Conflicts[:index], next.Conflicts[index+1:]...)
 	if len(next.Conflicts) == 0 {
 		next.Manifest.SyncedCommit = next.Manifest.PendingCommit

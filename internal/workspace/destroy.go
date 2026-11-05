@@ -19,6 +19,13 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
+	if record, readErr := e.readRegistration(name); readErr == nil && record.Phase == "ready" {
+		if gone, goneErr := e.laneDirectoryGone(record); goneErr != nil {
+			return report, goneErr
+		} else if gone {
+			return e.destroyMissing(ctx, record, dryRun)
+		}
+	}
 	opened, err := e.openLane(name)
 	if err != nil {
 		return report, err
@@ -48,6 +55,9 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 	record.Quarantine = filepath.Join(e.WorkRoot, ".workcopy-trash-"+record.ID)
 	record.DeleteFiles = map[string]model.FileVersion{}
 	record.DeleteDirs = []string{}
+	discarded := []string{}
+	copied := opened.contextSet()
+	contextEdited := 0
 	err = opened.root.Walk(func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -78,6 +88,29 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 			return nil
 		}
 		before, known := opened.snapshot.Baseline.Files[relative]
+		if recorded, isContext := copied[relative]; isContext && !metadata && !mapping && !known {
+			// A private copy of agent instructions from the main checkout.
+			version, _, readErr := state.ReadVersion(opened.root, relative, model.FileVersion{}, false)
+			if readErr != nil {
+				return readErr
+			}
+			if version.Exists() && version.Hash != recorded.Hash {
+				contextEdited++
+			}
+			record.DeleteFiles[relative] = version
+			return nil
+		}
+		if !metadata && !mapping && !known && opened.discardable(relative) {
+			// Build output the owner declared disposable. The content is still
+			// recorded so deletion can tell if it changes while quarantined.
+			version, _, readErr := state.ReadVersion(opened.root, relative, model.FileVersion{}, false)
+			if readErr != nil {
+				return readErr
+			}
+			record.DeleteFiles[relative] = version
+			discarded = append(discarded, relative)
+			return nil
+		}
 		if !metadata && !mapping && !known {
 			return model.Fail(3, "unexported-local-file", "Local-only file would be lost, including ignored files: "+relative+". Preserve it or explicitly use --force")
 		}
@@ -115,6 +148,19 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 		}
 	}
 	report.Plan = &Plan{Action: "destroy", Files: []string{name}, Effects: []string{"Verify registered ownership and local contributions", "Quarantine the lane before deleting owned entries without following links", "Retain separate review worktrees"}}
+	if len(copied) > 0 {
+		effect := fmt.Sprintf("Discard %d private agent-context copies (the originals in the main checkout are untouched)", len(copied))
+		if contextEdited > 0 {
+			effect += fmt.Sprintf("; %d were edited in the lane and those edits are lost", contextEdited)
+		}
+		report.Plan.Effects = append(report.Plan.Effects, effect)
+	}
+	if len(discarded) > 0 {
+		report.Plan.Effects = append(report.Plan.Effects, fmt.Sprintf("Discard %d local-only files matching the owner's destroy.discard patterns (for example %s)", len(discarded), discarded[0]))
+	}
+	if !opened.snapshot.Manifest.OwnerConfig && opened.snapshot.Manifest.Config.Destroy != nil {
+		report.Warnings = append(report.Warnings, "destroy.discard in a repository-committed configuration is ignored; only an owner-supplied --config can grant it.")
+	}
 	if dryRun {
 		report.Message = "Deletion planned; no registry or filesystem changes were made."
 		return report, nil
@@ -182,7 +228,7 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 			return model.Fail(3, "quarantine-changed", "New file in quarantine: "+name)
 		}
 		if !record.Force {
-			current, _, readErr := state.ReadVersion(root, name, before, true)
+			current, _, readErr := state.ReadVersion(root, name, before, false)
 			if readErr != nil {
 				return readErr
 			}
@@ -219,7 +265,7 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 			return err
 		}
 		if !record.Force {
-			current, _, readErr := state.ReadVersion(root, name, record.DeleteFiles[name], true)
+			current, _, readErr := state.ReadVersion(root, name, record.DeleteFiles[name], false)
 			if readErr != nil {
 				root.Close()
 				return readErr

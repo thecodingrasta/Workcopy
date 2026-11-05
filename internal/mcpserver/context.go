@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"workcopy/internal/agentctx"
 	"workcopy/internal/fsops"
 	"workcopy/internal/model"
 	"workcopy/internal/project"
@@ -21,7 +22,27 @@ type Validation struct {
 	Command          []string `json:"command,omitempty"`
 	Prerequisites    string   `json:"prerequisites"`
 }
+
+// AgentContextSummary tells an agent, at bootstrap, what instruction files new
+// lanes will receive and how to change that. The full list is in
+// workcopy_agent_context.
+type AgentContextSummary struct {
+	Enabled bool `json:"enabled"`
+	// Agents are the tools new lanes serve and AgentsSource says why; Client is
+	// the name this MCP client announced.
+	Agents       []string             `json:"agents,omitempty"`
+	AgentsSource string               `json:"agentsSource,omitempty"`
+	Client       string               `json:"client,omitempty"`
+	NotSelected  []string             `json:"notSelected,omitempty"`
+	Tools        []string             `json:"tools,omitempty"`
+	Files        int                  `json:"files"`
+	Bytes        int64                `json:"bytes"`
+	Candidates   []agentctx.Candidate `json:"candidates,omitempty"`
+	SettingsFile string               `json:"settingsFile,omitempty"`
+	Guidance     string               `json:"guidance"`
+}
 type Context struct {
+	AgentContext        *AgentContextSummary     `json:"agentContext,omitempty"`
 	Repository          string                   `json:"repository"`
 	RepositoryID        string                   `json:"repositoryId"`
 	WorkRoot            string                   `json:"workRoot"`
@@ -96,6 +117,10 @@ func (s *Server) bootstrap(ctx context.Context, page Page) (Output, error) {
 	r, e := s.discover(ctx)
 	out := s.result(r, e, page)
 	out.Context = c
+	if preview, previewErr := s.engine.AgentContext(ctx, "", false, false); previewErr == nil && preview.AgentContext != nil {
+		a := preview.AgentContext
+		c.AgentContext = &AgentContextSummary{Enabled: a.Enabled, Agents: a.Agents, AgentsSource: a.AgentsSource, Client: a.Client, NotSelected: a.NotSelected, Tools: a.Tools, Files: len(a.Included), Bytes: a.TotalBytes, Candidates: a.Candidates, SettingsFile: a.SettingsFile, Guidance: a.Guidance}
+	}
 	if r.Config != nil {
 		for name := range r.Config.Profiles {
 			c.Profiles = append(c.Profiles, name)

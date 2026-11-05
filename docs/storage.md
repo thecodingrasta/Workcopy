@@ -25,6 +25,10 @@ Build outputs, compiler intermediates and virtual environments can depend on abs
 
 Keep mutable outputs such as `bin`, `obj`, generated source, coverage data and temporary build products private to each lane. These outputs can be duplicated across lanes and are not included in Workcopy's source-allocation estimate or capped by its reserve. They still reduce free space, which can block later Workcopy operations. Give each lane a storage budget and use the build tool's clean command only for outputs confirmed disposable. If a build tool supports relocating outputs, configure a unique output directory per lane. Never point concurrent lanes at one writable output directory: source versions and build settings can differ, and one build can replace another lane's artifacts. Workcopy does not share or deduplicate build outputs automatically.
 
+## Fields added after v0.1.3
+
+Lane manifests may carry `eol` on a file version (`lf` or `crlf`, meaning the file is text, is compared in its LF form and is written in that form) and `ownerConfig` (the configuration came from an owner-supplied file). Registrations may carry `branch`. Manifests may carry `contextAgents` (the agent tools the lane serves: tool keys, `all` or `generic`) and each `agentContext` record may carry `sensitive` (the owner named that exact file as possibly holding credentials). All are optional and absent means the v0.1.3 behaviour, so existing lanes keep working; a v0.1.3 binary cannot read a manifest or registration that contains them.
+
 ## Explicit sharing
 
 The command form is:

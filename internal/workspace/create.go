@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
+	"workcopy/internal/agents"
+	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
 	"workcopy/internal/git"
 	"workcopy/internal/model"
@@ -27,9 +28,14 @@ type CreateOptions struct {
 	Shares             []string
 	TrustShared        bool
 	DependencyIdentity string
+	// Agents selects the agent tools this lane serves (keys, "all" or "auto").
+	// Empty uses the owner's setting, where "auto" follows the MCP client.
+	Agents []string
 }
 
-func entryVersion(entry git.TreeEntry, body []byte) (model.FileVersion, error) {
+// entryVersion describes a committed blob as a lane file. rule is the unresolved
+// line-ending rule for the path; it only applies to regular files.
+func entryVersion(entry git.TreeEntry, body []byte, rule string) (model.FileVersion, error) {
 	kind, mode := model.Regular, uint32(0644)
 	switch entry.Mode {
 	case 0100644:
@@ -43,6 +49,9 @@ func entryVersion(entry git.TreeEntry, body []byte) (model.FileVersion, error) {
 	}
 	version := model.Version(kind, mode, body)
 	version.ObjectID = entry.ObjectID
+	if kind == model.Regular {
+		version.Eol = eol.ForBlob(rule, body)
+	}
 	return version, nil
 }
 func validateTree(tree map[string]git.TreeEntry, selection model.Selection, requirePaths bool) ([]string, error) {
@@ -52,10 +61,16 @@ func validateTree(tree map[string]git.TreeEntry, selection model.Selection, requ
 			continue
 		}
 		if err := fsops.ValidateSourcePath(name); err != nil {
-			return nil, err
+			return nil, model.Fail(3, "unportable-source-path", "A selected tracked path cannot be written safely on every supported platform ("+err.Error()+"). Workcopy refuses it rather than rename it: leave it out with --project or a profile, or rename it in the repository.")
 		}
-		if entry.Kind != "blob" || entry.Size > model.MaxFileBytes {
-			return nil, model.Fail(3, "unsupported-source-entry", "Selected path is a submodule, special entry or exceeds 64 MiB: "+name)
+		if entry.Kind == "commit" {
+			return nil, model.Fail(3, "unsupported-source-entry", "Selected path is a Git submodule, which lanes do not materialize: "+name+". Leave it out with --project or a profile.")
+		}
+		if entry.Kind != "blob" {
+			return nil, model.Fail(3, "unsupported-source-entry", "Selected path is a special Git tree entry that lanes do not materialize: "+name)
+		}
+		if entry.Size > model.MaxFileBytes {
+			return nil, model.Fail(3, "unsupported-source-entry", fmt.Sprintf("Selected file exceeds the 64 MiB lane file limit (%d bytes): %s", entry.Size, name))
 		}
 		names = append(names, name)
 	}
@@ -83,6 +98,9 @@ func validateTree(tree map[string]git.TreeEntry, selection model.Selection, requ
 func (e *Engine) Create(ctx context.Context, name string, options CreateOptions, dryRun bool) (Report, error) {
 	report := Report{Command: "create"}
 	if err := validateName(name); err != nil {
+		return report, err
+	}
+	if err := validateAgents(options.Agents); err != nil {
 		return report, err
 	}
 	if options.All && (options.Profile != "" || len(options.Projects) > 0) {
@@ -116,7 +134,8 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	if err != nil {
 		return report, err
 	}
-	if err = e.validateAttributes(ctx, commit, names); err != nil {
+	plan, err := e.checkoutPlan(ctx, commit, names)
+	if err != nil {
 		return report, err
 	}
 	destination := filepath.Join(e.WorkRoot, name)
@@ -130,6 +149,9 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		report.Plan.SourceBytes += tree[name].Size
 	}
 	report.Warnings = catalog.Warnings
+	if warning := LaneStorageWarning(e.WorkRoot); warning != "" {
+		report.Warnings = append(report.Warnings, warning)
+	}
 	if len(options.Shares) > 0 {
 		return report, model.Fail(2, "use-explicit-share", "Create the lane, then use share for each explicitly trusted dependency mapping")
 	}
@@ -137,6 +159,11 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		return report, model.Fail(2, "unused-sharing-options", "Sharing options belong to the share command")
 	}
 	if dryRun {
+		if e.contextPolicy().Enabled {
+			if preview, _, previewErr := e.contextPlan(ctx, nil, e.selectAgents(ctx, nil, options.Agents)); previewErr == nil && len(preview.Files) > 0 {
+				report.Plan.Effects = append(report.Plan.Effects, fmt.Sprintf("Copy %d agent instruction files (%d bytes) from the main checkout", len(preview.Files), preview.TotalBytes))
+			}
+		}
 		report.Message = "Creation planned; no directories, state or Git refs were written."
 		return report, nil
 	}
@@ -160,18 +187,28 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	if err != nil {
 		return report, err
 	}
+	respect, err := e.executableBitsRespected(ctx, registry)
+	if err != nil {
+		return report, err
+	}
 	reader, err := e.Repository.Reader(ctx)
 	if err != nil {
 		return report, err
 	}
 	defer reader.Close()
-	next := model.Snapshot{Manifest: model.Manifest{SchemaVersion: 1, ID: id, Name: name, WorkspacePath: destination, RepositoryRoot: e.Repository.Root, CommonGitDir: e.Repository.CommonDir, WorkRoot: e.WorkRoot, Branch: branch, SyncedCommit: commit, Generation: 2, Phase: "ready", RespectExecutableBits: runtime.GOOS != "windows", Config: config, Selection: selection}, Baseline: model.Baseline{Files: map[string]model.FileVersion{}}, Conflicts: []model.Conflict{}}
+	var contextAgents []string
+	var creationSelection agents.Resolution
+	if e.contextPolicy().Enabled {
+		creationSelection = e.selectAgents(ctx, nil, options.Agents)
+		contextAgents = recordSelection(creationSelection)
+	}
+	next := model.Snapshot{Manifest: model.Manifest{ContextAgents: contextAgents, SchemaVersion: 1, ID: id, Name: name, WorkspacePath: destination, RepositoryRoot: e.Repository.Root, CommonGitDir: e.Repository.CommonDir, WorkRoot: e.WorkRoot, Branch: branch, SyncedCommit: commit, Generation: 2, Phase: "ready", RespectExecutableBits: respect, OwnerConfig: options.ConfigData != nil || options.ConfigPath != "", Config: config, Selection: selection}, Baseline: model.Baseline{Files: map[string]model.FileVersion{}}, Conflicts: []model.Conflict{}}
 	for _, filename := range names {
 		body, readErr := reader.Read(tree[filename].ObjectID)
 		if readErr != nil {
 			return report, readErr
 		}
-		version, versionErr := entryVersion(tree[filename], body)
+		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}
@@ -182,10 +219,21 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		}
 		next.Baseline.Files[filename] = version
 	}
+	// Fail before any pin, registration or directory exists, so a host that cannot
+	// create symbolic links leaves nothing behind to recover.
+	for filename, version := range next.Baseline.Files {
+		if version.Kind != model.Symlink {
+			continue
+		}
+		if probeErr := registry.ProbeSymlink(); probeErr != nil {
+			return report, model.Fail(3, "symlink-unavailable", "This selection tracks symbolic links (first: "+filename+") but this account cannot create them in "+e.WorkRoot+" ("+probeErr.Error()+"). On Windows enable Developer Mode or grant the 'Create symbolic links' right, or choose a lane root on an NTFS/ext4/APFS volume, or leave the linked paths out with --project or a profile. Nothing was created.")
+		}
+		break
+	}
 	if err = e.Repository.Pin(ctx, id, commit); err != nil {
 		return report, err
 	}
-	record := registration{SchemaVersion: 1, ID: id, Name: name, CommonGitDir: e.Repository.CommonDir, Path: destination, Phase: "creating", Seed: &next}
+	record := registration{SchemaVersion: 1, ID: id, Name: name, CommonGitDir: e.Repository.CommonDir, Path: destination, Phase: "creating", Branch: branch, Seed: &next}
 	if err = saveRegistration(registry, record); err != nil {
 		return report, err
 	}
@@ -203,13 +251,32 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	report.Workspace = view(next)
 	report.Generation = next.Manifest.Generation
 	report.Message = "Git-free lane created from the selected commit. No package restore was run."
+	if e.contextPolicy().Enabled {
+		summary, warning := e.copyInitialContext(ctx, name)
+		report.AgentContext = summary
+		if summary != nil {
+			// The record says what was chosen; the report keeps why it was chosen.
+			summary.AgentsSource = creationSelection.Source
+		}
+		if warning != "" {
+			report.Warnings = append(report.Warnings, warning)
+		} else if summary != nil && len(summary.Added) > 0 {
+			report.Message += fmt.Sprintf(" Copied %d agent instruction files from the main checkout.", len(summary.Added))
+		}
+	}
 	return report, nil
 }
 func validateLink(name, target string) error {
-	if filepath.IsAbs(target) || strings.Contains(target, "\\") {
-		return fmt.Errorf("source link must stay inside the lane: %s", name)
+	unsafe := func(reason string) error {
+		return model.Fail(3, "unsafe-source-link", "Tracked symbolic link "+name+" is refused ("+reason+"). Links must be relative and stay inside the lane; leave the path out with --project or a profile.")
 	}
-	return fsops.ValidateSourcePath(filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(name)), target))))
+	if filepath.IsAbs(target) || strings.HasPrefix(target, "/") || strings.Contains(target, "\\") || (len(target) >= 2 && target[1] == ':') {
+		return unsafe("absolute or backslash target")
+	}
+	if err := fsops.ValidateSourcePath(filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(name)), target)))); err != nil {
+		return unsafe(err.Error())
+	}
+	return nil
 }
 func (e *Engine) finishCreation(ctx context.Context, record registration) error {
 	if record.Seed == nil {
@@ -221,6 +288,9 @@ func (e *Engine) finishCreation(ctx context.Context, record registration) error 
 	}
 	defer root.Close()
 	store := state.New(root)
+	objects := newGitObjects(ctx, e.Repository)
+	defer objects.Close()
+	store.Objects = objects
 	if _, err = root.Lstat(state.ManifestPath); os.IsNotExist(err) {
 		seed := *record.Seed
 		seed.Manifest.Generation = 1
@@ -256,23 +326,17 @@ func (e *Engine) finishCreation(ctx context.Context, record registration) error 
 	if err != nil {
 		return err
 	}
-	reader, err := e.Repository.Reader(ctx)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
 	names := []string{}
 	for name := range record.Seed.Baseline.Files {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	// Contents come straight from Git when the transaction is applied, and
+	// progress is reported as they are read, which is the write phase itself.
+	objects.progress = func(done int) { reportProgress(ctx, "Creating lane files", done, len(names)) }
+	reportProgress(ctx, "Creating lane files", 0, len(names))
 	for _, name := range names {
-		version := record.Seed.Baseline.Files[name]
-		body, readErr := reader.Read(version.ObjectID)
-		if readErr != nil {
-			return readErr
-		}
-		if err = tx.Add(name, model.FileVersion{Kind: model.Missing}, version, body, false); err != nil {
+		if err = tx.AddFromObject(name, model.FileVersion{Kind: model.Missing}, record.Seed.Baseline.Files[name]); err != nil {
 			return err
 		}
 	}
@@ -329,7 +393,8 @@ func (e *Engine) Expand(ctx context.Context, name string, requested []string, dr
 			additions = append(additions, filename)
 		}
 	}
-	if err = e.validateAttributes(ctx, opened.snapshot.Manifest.SyncedCommit, additions); err != nil {
+	plan, err := e.checkoutPlan(ctx, opened.snapshot.Manifest.SyncedCommit, additions)
+	if err != nil {
 		return report, err
 	}
 	report.Plan = &Plan{Action: "expand", Files: additions}
@@ -366,7 +431,7 @@ func (e *Engine) Expand(ctx context.Context, name string, requested []string, dr
 		if readErr != nil {
 			return report, readErr
 		}
-		version, versionErr := entryVersion(tree[filename], body)
+		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}

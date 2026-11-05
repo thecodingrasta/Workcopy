@@ -3,6 +3,9 @@ package state
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
+	"workcopy/internal/agents"
+	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
 	"workcopy/internal/model"
 )
@@ -18,8 +21,11 @@ func validateVersion(version model.FileVersion) error {
 		if version.Mode != 0644 && version.Mode != 0755 {
 			return fmt.Errorf("invalid regular file mode")
 		}
+		if !eol.Valid(version.Eol) {
+			return fmt.Errorf("invalid line-ending policy")
+		}
 	case model.Symlink:
-		if version.Mode != 0120000 {
+		if version.Mode != 0120000 || version.Eol != "" {
 			return fmt.Errorf("invalid symlink mode")
 		}
 	default:
@@ -80,6 +86,27 @@ func validateSnapshot(snapshot model.Snapshot) error {
 			return fmt.Errorf("invalid mapping record")
 		}
 		mappings[mapping.Path] = true
+	}
+	if len(snapshot.Manifest.ContextAgents) > 64 {
+		return fmt.Errorf("too many context agents")
+	}
+	for _, key := range snapshot.Manifest.ContextAgents {
+		if !agents.ValidSelector(key) || key != strings.ToLower(key) {
+			return fmt.Errorf("invalid context agent: %q", key)
+		}
+	}
+	contextPaths := map[string]bool{}
+	if len(snapshot.Manifest.AgentContext) > 20000 {
+		return fmt.Errorf("too many agent-context files")
+	}
+	for _, file := range snapshot.Manifest.AgentContext {
+		if err := fsops.ValidateSourcePath(file.Path); err != nil {
+			return err
+		}
+		if _, tracked := snapshot.Baseline.Files[file.Path]; tracked || contextPaths[file.Path] || !digest.MatchString(file.Hash) || file.Size < 0 {
+			return fmt.Errorf("invalid agent-context record: %s", file.Path)
+		}
+		contextPaths[file.Path] = true
 	}
 	reviews := map[string]bool{}
 	for _, review := range snapshot.Manifest.Reviews {

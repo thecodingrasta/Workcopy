@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 
 	"workcopy/internal/fsops"
 	"workcopy/internal/model"
@@ -16,24 +13,11 @@ import (
 )
 
 func doctor(ctx context.Context, a arguments) (workspace.Report, error) {
-	report := workspace.Report{Command: "doctor"}
 	if len(a.positionals) != 0 {
-		return report, usage(fmt.Errorf("doctor takes no positional arguments"))
+		return workspace.Report{Command: "doctor"}, usage(fmt.Errorf("doctor takes no positional arguments"))
 	}
-	executable, err := exec.LookPath("git")
-	if err != nil {
-		return report, model.Fail(3, "git-unavailable", "Git is not available on PATH")
-	}
-	output, err := exec.CommandContext(ctx, executable, "--version").Output()
-	if err != nil {
-		return report, err
-	}
-	backend := fsops.BackendDescription
-	report.Message = fmt.Sprintf("Workcopy %s\nRuntime: %s %s/%s\nGit: %s\nFilesystem: %s\nNo installations, package restores, or repository changes were performed.", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH, strings.TrimSpace(string(output)), backend)
-	report.Warnings = []string{"A Git-free lane prevents accidental Git operations; it does not sandbox an agent with access to the source repository.", "Writable shared dependency links are cooperative, not read-only isolation."}
-	return report, nil
+	return workspace.Doctor(ctx, Version, a.value("repo"), a.value("root"))
 }
-
 func inspectLegacy(a arguments) (workspace.Report, error) {
 	report := workspace.Report{Command: "legacy"}
 	if len(a.positionals) != 0 || a.value("workspace") == "" {

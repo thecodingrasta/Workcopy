@@ -24,6 +24,8 @@ var executable string
 const testOutputMarker = "Workcopy CLI acceptance test output\n"
 
 func TestMain(tests *testing.M) {
+	restoreSettings := testutil.IsolateSettings()
+	defer restoreSettings()
 	directory, err := os.MkdirTemp("", "wc-cli-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,6 +48,12 @@ func TestMain(tests *testing.M) {
 		os.Exit(1)
 	}
 	code := tests.Run()
+	if code == 0 && fullRun() {
+		if coverageErr := verifyCommandCoverage(); coverageErr != nil {
+			fmt.Fprintln(os.Stderr, coverageErr)
+			code = 1
+		}
+	}
 	if err = removeTestOutput(directory); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if code == 0 {
@@ -76,6 +84,7 @@ func removeTestOutput(directory string) error {
 }
 func invoke(t *testing.T, directory string, expected int, arguments ...string) workspace.Report {
 	t.Helper()
+	recordCommand(arguments...)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, append(arguments, "--json")...)

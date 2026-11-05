@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"workcopy/internal/eol"
 	"workcopy/internal/model"
 	"workcopy/internal/state"
 )
@@ -77,6 +78,9 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 	if commit == opened.snapshot.Manifest.SyncedCommit {
 		report.ExitCode = 4
 		report.Message = "The selected upstream snapshot has not changed."
+		if !dryRun && e.contextPolicy().RefreshOnSync {
+			e.syncContext(ctx, opened, &report)
+		}
 		return report, nil
 	}
 	tree, err := e.Repository.Tree(ctx, commit)
@@ -87,7 +91,8 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 	if err != nil {
 		return report, err
 	}
-	if err = e.validateAttributes(ctx, commit, names); err != nil {
+	plan, err := e.checkoutPlan(ctx, commit, names)
+	if err != nil {
 		return report, err
 	}
 	current, err := e.scan(ctx, opened)
@@ -135,10 +140,7 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 			return report, err
 		}
 		base := opened.snapshot.Baseline.Files[filename]
-		local, localBody, readErr := state.ReadVersion(opened.root, filename, base, opened.snapshot.Manifest.RespectExecutableBits)
-		if readErr != nil {
-			return report, readErr
-		}
+		var readErr error
 		up := model.FileVersion{Kind: model.Missing}
 		var upBody []byte
 		if entry, ok := tree[filename]; ok {
@@ -149,11 +151,20 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 				if readErr != nil {
 					return report, readErr
 				}
-				up, readErr = entryVersion(entry, upBody)
+				up, readErr = entryVersion(entry, upBody, plan.rule(filename))
 				if readErr != nil {
 					return report, readErr
 				}
 			}
+		}
+		if up.Equal(base) {
+			// Upstream did not change this path, so the lane file is irrelevant
+			// here and is not read. This keeps sync proportional to the change.
+			continue
+		}
+		local, localBody, readErr := state.ReadVersion(opened.root, filename, opened.baselineFor(filename), opened.snapshot.Manifest.RespectExecutableBits)
+		if readErr != nil {
+			return report, readErr
 		}
 		desired, body := local, localBody
 		conflict := false
@@ -164,13 +175,12 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 		case local.Equal(base):
 			desired = up
 			body = upBody
-			if up.Exists() && body == nil {
-				body, err = reader.Read(up.ObjectID)
-				if err != nil {
-					return report, err
-				}
-			}
 		case local.Equal(up):
+			// Nothing is written, so the file keeps the form it already has. Keep
+			// reading it as text if it was, even if the rule for it has changed.
+			if up.Eol == eol.Raw {
+				up.Eol = local.Eol
+			}
 		case base.Kind == model.Regular && local.Kind == model.Regular && up.Kind == model.Regular:
 			baseBody, baseErr := reader.Read(base.ObjectID)
 			if baseErr != nil {
@@ -195,6 +205,7 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 					mode = up.Mode
 				}
 				desired = model.Version(model.Regular, mode, merged)
+				desired.Eol = up.Eol
 				body = merged
 			}
 		default:
@@ -216,7 +227,9 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 		}
 		next.Baseline.Files[filename] = up
 		if !local.Equal(desired) {
-			if desired.Exists() {
+			if desired.Exists() && desired.ObjectID == "" {
+				// Merged and resolved content exists only here; Git-sourced
+				// content is read from Git when the transaction is applied.
 				if _, err = opened.store.PutBlob(body); err != nil {
 					return report, err
 				}
@@ -262,5 +275,22 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 		report.ExitCode = 1
 		report.Message = "Conflicts were recorded. Nonconflicting updates were applied; resolve each conflict explicitly."
 	}
+	if e.contextPolicy().RefreshOnSync {
+		e.syncContext(ctx, opened, &report)
+	}
 	return report, nil
+}
+
+// syncContext keeps a lane's agent instructions current with the main checkout
+// whenever the lane syncs. A failure is a warning: the source sync succeeded.
+func (e *Engine) syncContext(ctx context.Context, opened *lane, report *Report) {
+	result, err := e.refreshAgentContext(ctx, opened, false, nil)
+	if err != nil {
+		report.Warnings = append(report.Warnings, "agent context was not refreshed: "+err.Error())
+		return
+	}
+	report.AgentContext = result
+	if len(result.Added)+len(result.Updated)+len(result.Removed) > 0 {
+		report.Message += " " + contextOutcome(result, "Agent context refreshed")
+	}
 }

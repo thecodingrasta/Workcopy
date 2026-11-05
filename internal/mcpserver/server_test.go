@@ -38,6 +38,7 @@ func connectServer(t *testing.T, s *Server) *mcp.ClientSession {
 	t.Cleanup(cancel)
 	go func() { _ = s.Run(ctx, serverTransport) }()
 	c := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	observe(c)
 	session, err := c.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +192,7 @@ func TestToolSurfaceHasNoBypassAndRejectsUnknownArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 17 {
+	if len(list.Tools) != 19 {
 		t.Fatalf("tools: %d", len(list.Tools))
 	}
 	for _, tool := range list.Tools {

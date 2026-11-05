@@ -13,6 +13,23 @@
     "defaultProfile": {
       "type": "string"
     },
+    "destroy": {
+      "description": "Honoured only from an owner-supplied configuration (--config); a repository-committed value is ignored.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "discard": {
+          "description": "Globs of local-only files (never tracked source) that destroy may discard without --force, for example build output.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    },
     "discovery": {
       "type": "object",
       "additionalProperties": false,

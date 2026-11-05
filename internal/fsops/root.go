@@ -2,6 +2,8 @@
 package fsops
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -82,7 +84,8 @@ func (r *Root) guard(name string, parents bool) error {
 	}
 	components := strings.Split(name, "/")
 	for n := 1; n < len(components); n++ {
-		info, err := r.backend.lstat(strings.Join(components[:n], "/"))
+		parent := strings.Join(components[:n], "/")
+		info, err := r.backend.lstat(parent)
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -95,7 +98,7 @@ func (r *Root) guard(name string, parents bool) error {
 			return &os.PathError{Op: "lookup", Path: name, Err: os.ErrNotExist}
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("parent is not a real directory: %s", strings.Join(components[:n], "/"))
+			return fmt.Errorf("parent is not a real directory: %s", parent)
 		}
 	}
 	return nil
@@ -114,6 +117,13 @@ func (r *Root) ReadFileLimit(name string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return r.ReadRegular(name, info, limit)
+}
+
+// ReadRegular reads a file the caller has just examined with Lstat, so bulk
+// readers do not pay for the parent-directory checks and the stat twice.
+// info must come from r.Lstat(name); the open is still verified against it.
+func (r *Root) ReadRegular(name string, info os.FileInfo, limit int64) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file: %s", name)
 	}
@@ -194,7 +204,15 @@ func (r *Root) WriteAtomic(name string, body []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer r.backend.remove(temporary)
+	// The temporary file is removed on every failure path. After a successful
+	// rename it no longer exists, and a remove would only cost a wasted round
+	// trip per file on filesystems with slow metadata calls.
+	renamed := false
+	defer func() {
+		if !renamed {
+			r.backend.remove(temporary)
+		}
+	}()
 	if _, err = file.Write(body); err != nil {
 		file.Close()
 		return err
@@ -209,7 +227,27 @@ func (r *Root) WriteAtomic(name string, body []byte, mode os.FileMode) error {
 	if err = r.guard(name, true); err != nil {
 		return err
 	}
-	return r.backend.rename(temporary, name)
+	if err = r.backend.rename(temporary, name); err != nil {
+		return err
+	}
+	renamed = true
+	return nil
+}
+
+// ExecutableBitsFaithful reports whether the filesystem stores POSIX
+// permission bits honestly, judged by a file Workcopy itself created without
+// any execute bit (mode 0600). Some filesystems, notably WSL's drvfs/9p mounts
+// of Windows drives, FAT/exFAT and some network shares, report every file as
+// executable, which would make every file look locally modified.
+//
+// known is false when the probe file is absent or not a regular file; callers
+// should then keep their declared setting.
+func (r *Root) ExecutableBitsFaithful(probe string) (faithful, known bool) {
+	info, err := r.Lstat(probe)
+	if err != nil || !info.Mode().IsRegular() {
+		return false, false
+	}
+	return info.Mode().Perm()&0111 == 0, true
 }
 func (r *Root) Remove(name string) error {
 	if err := r.guard(name, true); err != nil {
@@ -234,11 +272,42 @@ func (r *Root) Symlink(name, target string, external bool) error {
 	}
 	return r.backend.symlink(target, name)
 }
+
+// ProbeSymlink reports whether a symbolic link can be created beneath the root.
+// Windows needs Developer Mode or the "create symbolic links" privilege, and
+// some volumes (FAT, exFAT) never support them. The probe link is removed
+// before returning and is never followed.
+func (r *Root) ProbeSymlink() error {
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return err
+	}
+	name := ".workcopy-symlink-probe-" + hex.EncodeToString(suffix[:])
+	if err := r.Symlink(name, "workcopy-probe-target", true); err != nil {
+		return err
+	}
+	return r.Remove(name)
+}
 func (r *Root) Walk(fn fs.WalkDirFunc) error {
 	if err := r.backend.verify(); err != nil {
 		return err
 	}
 	return fs.WalkDir(r.backend.filesystem(), ".", fn)
+}
+
+// WalkFrom walks one directory (or file) beneath the root. Symbolic links are
+// reported, never followed. A missing start is not an error: it yields nothing.
+func (r *Root) WalkFrom(start string, fn fs.WalkDirFunc) error {
+	if err := r.guard(start, true); err != nil {
+		return err
+	}
+	if _, err := r.backend.lstat(start); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return fs.WalkDir(r.backend.filesystem(), start, fn)
 }
 
 func (r *Root) OpenLock(name string) (*os.File, error) {

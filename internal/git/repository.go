@@ -28,11 +28,22 @@ type TreeEntry struct {
 var objectID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 func ValidObjectID(value string) bool { return objectID.MatchString(value) }
+
+// commitMetadataEnvironment lists the only GIT_* variables Workcopy passes to
+// Git. They set who authored a review commit and when, which is how CI jobs and
+// containers normally supply an identity. Variables that redirect Git to
+// another repository, work tree, index or config (GIT_DIR, GIT_WORK_TREE,
+// GIT_INDEX_FILE, GIT_CONFIG_*) stay stripped.
+var commitMetadataEnvironment = map[string]bool{
+	"GIT_AUTHOR_NAME": true, "GIT_AUTHOR_EMAIL": true, "GIT_AUTHOR_DATE": true,
+	"GIT_COMMITTER_NAME": true, "GIT_COMMITTER_EMAIL": true, "GIT_COMMITTER_DATE": true,
+}
+
 func Environment() []string {
 	result := []string{}
 	for _, value := range os.Environ() {
 		key := strings.ToUpper(strings.SplitN(value, "=", 2)[0])
-		if !strings.HasPrefix(key, "GIT_") {
+		if !strings.HasPrefix(key, "GIT_") || commitMetadataEnvironment[key] {
 			result = append(result, value)
 		}
 	}
@@ -73,9 +84,9 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 func Open(ctx context.Context, directory string) (*Repository, error) {
-	executable, err := exec.LookPath("git")
+	executable, err := Executable()
 	if err != nil {
-		return nil, model.Fail(3, "git-unavailable", "Install Git and put it on PATH")
+		return nil, err
 	}
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
@@ -84,7 +95,7 @@ func Open(ctx context.Context, directory string) (*Repository, error) {
 	r := &Repository{Executable: executable}
 	body, err := r.Run(ctx, absolute, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, err
+		return nil, r.classifyOpenFailure(ctx, absolute, err)
 	}
 	r.Root, err = filepath.EvalSymlinks(strings.TrimSpace(string(body)))
 	if err != nil {
@@ -100,7 +111,28 @@ func Open(ctx context.Context, directory string) (*Repository, error) {
 	}
 	return r, nil
 }
+
+// classifyOpenFailure turns Git's reason for not opening a work tree into a
+// blocked-precondition error that says what to do. The cause is preserved in
+// the message; nothing here changes Git or repository configuration.
+func (r *Repository) classifyOpenFailure(ctx context.Context, directory string, cause error) error {
+	if ctx.Err() != nil {
+		return cause
+	}
+	if strings.Contains(cause.Error(), "dubious ownership") {
+		return model.Fail(3, "git-unsafe-directory", "Git refuses this repository because it is owned by a different account than the one running Workcopy ("+directory+"). This is common when WSL, a container or another user touches a Windows-owned checkout. Run Workcopy as the owner, or add the directory to Git's safe.directory list yourself (git config --global --add safe.directory <path>); Workcopy never edits Git configuration.")
+	}
+	if body, err := r.Run(ctx, directory, nil, "rev-parse", "--is-bare-repository"); err == nil && strings.TrimSpace(string(body)) == "true" {
+		return model.Fail(3, "bare-repository", directory+" is a bare Git repository. Lanes are cut from a repository with a working tree: run Workcopy from a normal clone, or pass --repo for one.")
+	}
+	if _, err := r.Run(ctx, directory, nil, "rev-parse", "--git-dir"); err != nil {
+		return model.Fail(3, "not-a-repository", directory+" is not inside a Git repository. Run Workcopy from a checkout, or pass --repo DIRECTORY.")
+	}
+	return cause
+}
+
 func (r *Repository) Resolve(ctx context.Context, ref string) (string, string, error) {
+	requested := ref
 	if ref == "" {
 		body, err := r.Run(ctx, r.Root, nil, "symbolic-ref", "-q", "HEAD")
 		if err == nil {
@@ -114,7 +146,15 @@ func (r *Repository) Resolve(ctx context.Context, ref string) (string, string, e
 	}
 	body, err := r.Run(ctx, r.Root, nil, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
-		return "", "", err
+		if ctx.Err() != nil {
+			return "", "", err
+		}
+		if requested == "" {
+			if _, headErr := r.Run(ctx, r.Root, nil, "rev-parse", "--verify", "--quiet", "HEAD"); headErr != nil {
+				return "", "", model.Fail(3, "no-commits", "This repository has no commits yet. Make an initial commit, then create a lane.")
+			}
+		}
+		return "", "", model.Fail(2, "ref-not-found", "Git reference does not name a commit in this repository: "+requested)
 	}
 	commit := strings.TrimSpace(string(body))
 	if !ValidObjectID(commit) {

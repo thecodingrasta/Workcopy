@@ -10,6 +10,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"workcopy/internal/fsops"
@@ -282,7 +283,7 @@ func Select(config model.Config, catalog Catalog, profileName string, requested 
 		var ok bool
 		profile, ok = config.Profiles[profileName]
 		if !ok {
-			return selection, fmt.Errorf("unknown profile: %s", profileName)
+			return selection, model.Fail(2, "unknown-profile", "Unknown profile "+profileName+"; run discover to list the configured profiles")
 		}
 	}
 	if !all {
@@ -319,7 +320,7 @@ func Select(config model.Config, catalog Catalog, profileName string, requested 
 		}
 		if !ok {
 			if err := fsops.ValidateSourcePath(id); err != nil {
-				return selection, err
+				return selection, model.Fail(2, "invalid-selection", "Cannot select "+strconv.Quote(id)+" ("+err.Error()+"). Name a project ID or a repository-relative directory such as src/app; run discover to list the projects. To take the whole repository use --all, which the MCP server does not offer.")
 			}
 			selection.Paths = append(selection.Paths, id)
 			selected[id] = true
@@ -342,11 +343,11 @@ func Select(config model.Config, catalog Catalog, profileName string, requested 
 		}
 	}
 	if profile.DependencyClosure != "" && profile.DependencyClosure != "strict" && profile.DependencyClosure != "include" {
-		return selection, fmt.Errorf("dependencyClosure must be strict or include")
+		return selection, model.Fail(2, "invalid-configuration", "dependencyClosure must be strict or include")
 	}
 	for _, pattern := range append(append([]string(nil), selection.Include...), selection.Exclude...) {
 		if strings.Contains(pattern, "\\") || strings.HasPrefix(pattern, "/") || strings.Contains(pattern, "..") {
-			return selection, fmt.Errorf("invalid selection pattern: %s", pattern)
+			return selection, model.Fail(2, "invalid-selection", "Invalid selection pattern "+strconv.Quote(pattern)+": patterns are repository-relative, use forward slashes and must not contain ..")
 		}
 		for _, segment := range strings.Split(pattern, "/") {
 			if segment != "**" {

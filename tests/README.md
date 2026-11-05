@@ -15,3 +15,7 @@ go test -count=1 ./tests/acceptance -run '^TestLargeMonorepoSupportsThreeIndepen
 ```
 
 These tests exercise Git and Workcopy's .NET project discovery/filtering. They do not restore packages or claim that a selected profile builds with a particular installed .NET SDK.
+
+The owner-reported defects are replayed through the compiled executable by `tests/acceptance/TestOwnerReportedIssuesThroughTheRealBinary` (line endings, list branch, slim merge output, foreign-path messages, `WORKCOPY_GIT`, `--abandon-review`, and a lane deleted outside Workcopy). Their engine-level and MCP-level counterparts live beside the code in `internal/workspace` and `internal/mcpserver`.
+
+`tests/interop` runs the Windows and Linux builds and both Gits against the same repositories on a machine with WSL. The command and tool coverage guards live in `tests/acceptance/coverage_test.go` and `internal/mcpserver/coverage_test.go`.

@@ -7,3 +7,5 @@ Copy the example to your repository as `.workcopy.json`, replace the project dec
 `minimal.workcopy.json` selects the whole repository through explicit generic discovery. `dotnet.workcopy.json` enables .NET discovery; it does not run MSBuild or guarantee buildability.
 
 See [configuration](../docs/configuration.md) for selection and dependency rules. The integration tests synthesize their own repositories rather than depending on a developer's private project layout.
+
+`workcopy.env.example` is a starting point for the [settings file](../docs/settings.md), which holds the lane location, owner configuration, MCP limits and timeout, and agent-context rules in one place. `mcp.json` needs no arguments once those are set there.

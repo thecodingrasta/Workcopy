@@ -69,7 +69,9 @@ Removing startup `--repo` changes `--root` from an exact root into a storage par
 
 `stdout` contains only MCP messages; help/startup errors use `stderr`. CLI `--json` is not a transport option. After interruption/cancellation, reconnect, inspect state and use recovery when instructed. Never remove metadata to make a retry appear successful.
 
-Each input frame is limited to 1 MiB before SDK decoding. Tool operations have a two-minute deadline. Cancellation can interrupt subprocess work but does not roll back an already completed transaction; inspect the resulting lane state after reconnecting.
+Each input frame is limited to 1 MiB before SDK decoding. Tool operations have a two-minute deadline by default; the owner can change it once with `WORKCOPY_TOOL_TIMEOUT` in the [settings file](settings.md) or per server with `--tool-timeout` (10s to 24h). When a deadline or cancellation interrupts a long operation the result is `cancelled` (exit 3) and its suggestion says to call `workcopy_recover`: an interrupted creation or review is journalled and finishes there. Cancellation does not roll back an already completed transaction; inspect the resulting lane state after reconnecting.
+
+A client that sends a progress token with `workcopy_create` or `workcopy_review` receives `notifications/progress` with the file count done and total, so a large repository looks busy rather than hung. Calls without a token send none.
 
 ## Say “use Workcopy MCP”
 
@@ -96,10 +98,12 @@ Results contain `schemaVersion:1`, `exitCode`, and `scope`, `report`, `context`,
 | Tool | Purpose |
 | --- | --- |
 | `workcopy_bootstrap` | Identity, catalog, profiles, build inputs, storage and guidance |
-| `workcopy_doctor` | Local diagnosis without installs/scripts |
+| `workcopy_agent_context` | Preview which untracked agent instruction files a lane (or a new lane) gets, what was refused and why, and unrecognised candidate directories. Optional `agents` previews another tool's selection. Read-only. See [agent context](agent-context.md) |
+| `workcopy_refresh_context` | Bring a lane's copied agent instruction files up to date with the main checkout; copies edited in the lane are kept. Optional `agents` moves the lane to other tools. Supports `dryRun` |
+| `workcopy_doctor` | Local diagnosis without installs/scripts: Git program, line-ending and file-mode settings, WSL drive warnings |
 | `workcopy_discover` | Committed project/dependency discovery |
 | `workcopy_list` | Owned registered lanes |
-| `workcopy_create` | Explicit projects/profile, dry-run and creation |
+| `workcopy_create` | Explicit projects/profile, dry-run and creation. Optional `agents` (for example `["kiro","codex"]` or `["all"]`) chooses whose instruction files the lane receives; by default the client's announced name decides |
 | `workcopy_lane_context` | Verified lane and validation context |
 | `workcopy_expand` | Add projects/paths without replacing edits |
 | `workcopy_status` | Changes, generation and conflict tokens |
@@ -111,7 +115,7 @@ Results contain `schemaVersion:1`, `exitCode`, and `scope`, `report`, `context`,
 | `workcopy_share` | Explicit link to owner-allowlisted dependency target |
 | `workcopy_unshare` | Remove link, retaining target |
 | `workcopy_recover` | Guarded interrupted-operation recovery |
-| `workcopy_destroy` | Guarded clean-lane cleanup, no force |
+| `workcopy_destroy` | Guarded clean-lane cleanup, no force. Clears a lane whose directory was deleted outside Workcopy and discards build output the owner listed in `destroy.discard`. Review leftovers are reported, never deleted |
 
 Mutations require `dryRun`. Creation requires `projects` or `profile`; implicit all-source selection is unavailable. Expand accepts project IDs/paths. Resolve takes `name`, `path`, current `token`, and `mode`: `local`, `upstream`, `delete`, `file`. File mode requires a repository-relative `fromFile` inside the owned lane. Later local edits require deliberate `expectedLocal` hash acknowledgement after inspection.
 

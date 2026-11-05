@@ -5,19 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"workcopy/internal/fsops"
-	"workcopy/internal/git"
 	"workcopy/internal/model"
+	"workcopy/internal/settings"
 	"workcopy/internal/workspace"
 )
+
+// DefaultToolTimeout bounds a single tool call. Large repositories on slow
+// filesystems can need more; the owner raises it with --tool-timeout.
+const DefaultToolTimeout = 2 * time.Minute
 
 type Options struct {
 	Root         string
@@ -25,6 +26,11 @@ type Options struct {
 	ReserveBytes uint64
 	ShareTargets []string
 	ConfigPath   string
+	// ToolTimeout is the per-call deadline; zero means DefaultToolTimeout.
+	ToolTimeout time.Duration
+	// Settings are the user's resolved preferences (agent-context rules and
+	// limits), shared by every repository this server is asked about.
+	Settings *settings.Resolved
 }
 
 type Server struct {
@@ -82,11 +88,28 @@ type Mutation struct {
 	Lane
 	DryRun bool `json:"dryRun" jsonschema:"Preview without persistent side effects"`
 }
+
+// ContextInput selects a lane for agent_context; without a name it previews the
+// repository.
+type ContextInput struct {
+	Page
+	Scope
+	Name   string   `json:"name,omitempty" jsonschema:"Registered lane name; omit to preview what a new lane would receive"`
+	Agents []string `json:"agents,omitempty" jsonschema:"Agent tools to serve, for example kiro, codex, claude, gemini, opencode, cursor, or all. Omit to use the owner setting; auto follows the MCP client"`
+}
+
+// RefreshInput refreshes a lane's copied agent context, optionally changing
+// which agent tools it serves.
+type RefreshInput struct {
+	Mutation
+	Agents []string `json:"agents,omitempty" jsonschema:"Change the agent tools this lane serves, for example kiro, codex, or all. Omit to keep the lane's recorded selection"`
+}
 type Create struct {
 	Mutation
 	Branch   string   `json:"branch,omitempty"`
 	Profile  string   `json:"profile,omitempty"`
 	Projects []string `json:"projects,omitempty"`
+	Agents   []string `json:"agents,omitempty" jsonschema:"Agent tools whose instruction files this lane receives, for example kiro, codex, claude, gemini, opencode, cursor, or all. Omit to use the owner setting; the default follows the MCP client and includes every known tool when it is not recognised"`
 }
 type Expand struct {
 	Mutation
@@ -138,15 +161,13 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		s.configErr = err
 	}
 	s.protocol = mcp.NewServer(&mcp.Implementation{Name: "workcopy", Version: version}, &mcp.ServerOptions{Instructions: Instructions, Capabilities: &mcp.ServerCapabilities{}, PageSize: 100})
-	add(s, "doctor", "Report runtime, Git and filesystem backend without changing the repository or running scripts.", true, func(ctx context.Context, s *Server, in Empty) (Output, error) {
-		gitPath, err := exec.LookPath("git")
-		if err != nil {
-			return s.result(workspace.Report{}, err, in.Page), nil
+	add(s, "doctor", "Report runtime, Git program, line-ending settings and filesystem warnings (for example a repository on a WSL Windows drive) without changing the repository or running scripts.", true, func(ctx context.Context, s *Server, in Empty) (Output, error) {
+		repository, root := "", ""
+		if s.engine != nil {
+			repository, root = s.engine.Repository.Root, s.engine.WorkRoot
 		}
-		cmd := exec.CommandContext(ctx, gitPath, "--version")
-		cmd.Env = git.Environment()
-		body, err := cmd.Output()
-		return s.result(workspace.Report{Command: "doctor", Message: fmt.Sprintf("Workcopy %s; %s %s/%s; %s; %s", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, string(body), fsops.BackendDescription)}, err, in.Page), nil
+		r, e := workspace.Doctor(ctx, version, repository, root)
+		return s.result(r, e, in.Page), nil
 	})
 	add(s, "bootstrap", "Start here: pass repo or your current directory. Identify an existing lane or discover a checkout, build inputs and storage headroom. Does not run builds or restores.", true, func(ctx context.Context, s *Server, in Bootstrap) (Output, error) {
 		if in.Directory != "" {
@@ -180,7 +201,7 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		if err != nil {
 			return s.result(workspace.Report{}, err, in.Page), nil
 		}
-		options := workspace.CreateOptions{Branch: in.Branch, Profile: in.Profile, Projects: in.Projects, ConfigData: s.configData, ExpectedCommit: commit}
+		options := workspace.CreateOptions{Branch: in.Branch, Profile: in.Profile, Projects: in.Projects, ConfigData: s.configData, ExpectedCommit: commit, Agents: in.Agents}
 		r, e := s.engine.Create(ctx, in.Name, options, true)
 		if e == nil && !in.DryRun {
 			e = s.admit(ctx, r.Plan.SourceBytes, len(r.Plan.Files), true)
@@ -246,6 +267,14 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		r, e := s.engine.Share(ctx, in.Name, in.Path, in.Target, in.DependencyIdentity, in.TrustShared, in.DryRun)
 		return s.result(r, e, in.Page), nil
 	})
+	add(s, "agent_context", "Preview which agent instruction files (rules, steering, prompts, skills) a lane receives from the main checkout, what was refused and why, and unrecognised directories that look like agent context. Give name for a lane. Settings are owner-controlled; the result says how to change them.", true, func(ctx context.Context, s *Server, in ContextInput) (Output, error) {
+		r, e := s.engine.AgentContextFor(ctx, in.Name, false, false, in.Agents)
+		return s.result(r, e, in.Page), nil
+	})
+	add(s, "refresh_context", "Bring a lane's copied agent instruction files up to date with the main checkout. Copies edited in the lane are kept; nothing outside the copied set is touched. Preview with dryRun.", false, func(ctx context.Context, s *Server, in RefreshInput) (Output, error) {
+		r, e := s.engine.AgentContextFor(ctx, in.Name, true, in.DryRun, in.Agents)
+		return s.result(r, e, in.Page), nil
+	})
 	add(s, "unshare", "Remove only an owned managed link, retaining its shared target. Does not delete dependency packages.", false, func(ctx context.Context, s *Server, in Solution) (Output, error) {
 		r, e := s.engine.Unshare(ctx, in.Name, in.Path, in.DryRun)
 		return s.result(r, e, in.Page), nil
@@ -259,11 +288,11 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		return s.result(r, e, in.Page), nil
 	})
 	s.protocol.AddResource(&mcp.Resource{URI: "workcopy://guide", Name: "Workcopy agent operating guide", MIMEType: "text/plain"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "workcopy://guide", MIMEType: "text/plain", Text: Instructions}}}, nil
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "workcopy://guide", MIMEType: "text/plain", Text: Instructions + "\n\n" + AgentContextGuide}}}, nil
 	})
 	for name, text := range map[string]string{"workcopy_controller": controllerPrompt, "workcopy_worker": workerPrompt} {
 		s.protocol.AddPrompt(&mcp.Prompt{Name: name, Description: "Safe independent-lane operating contract"}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-			return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: text}}}}, nil
+			return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: text + "\n\n" + AgentContextGuide}}}}, nil
 		})
 	}
 	return s
@@ -271,7 +300,7 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 
 func add[I any](s *Server, name, description string, readOnly bool, handler func(context.Context, *Server, I) (Output, error)) {
 	closed := false
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "workcopy_" + name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &closed}}, func(ctx context.Context, _ *mcp.CallToolRequest, in I) (*mcp.CallToolResult, Output, error) {
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "workcopy_" + name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &closed}}, func(ctx context.Context, request *mcp.CallToolRequest, in I) (*mcp.CallToolResult, Output, error) {
 		// Validate common pagination before any mutation.
 		body, _ := json.Marshal(in)
 		var page Page
@@ -280,8 +309,26 @@ func add[I any](s *Server, name, description string, readOnly bool, handler func
 			out := s.result(workspace.Report{}, model.Fail(2, "invalid-page", "offset must be nonnegative and limit must be 0..200"), Page{})
 			return &mcp.CallToolResult{IsError: true}, out, nil
 		}
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		timeout := s.opts.ToolTimeout
+		if timeout <= 0 {
+			timeout = DefaultToolTimeout
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
+		// The client's announced name selects which agent tool's instruction
+		// files a new lane receives, when the owner leaves that on auto.
+		if request.Session != nil {
+			if params := request.Session.InitializeParams(); params != nil && params.ClientInfo != nil {
+				ctx = workspace.WithClient(ctx, params.ClientInfo.Name)
+			}
+		}
+		// A client that sent a progress token is told how far long operations
+		// have got, so a slow repository looks busy rather than hung.
+		if token := request.Params.GetProgressToken(); token != nil && request.Session != nil {
+			ctx = workspace.WithProgress(ctx, func(message string, done, total int) {
+				_ = request.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{ProgressToken: token, Message: message, Progress: float64(done), Total: float64(total)})
+			})
+		}
 		var scope Scope
 		_ = json.Unmarshal(body, &scope)
 		if name == "bootstrap" {
@@ -337,6 +384,8 @@ func (s *Server) result(report workspace.Report, err error, page Page) Output {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			out.ExitCode = 3
 			out.Error.Code = "cancelled"
+			out.Error.Message = "The operation was interrupted by the tool deadline or a cancellation."
+			out.Error.Suggestion = "Partial work is recoverable: call workcopy_recover for the lane, then retry. The owner can raise the deadline with --tool-timeout."
 		}
 	}
 	report.ExitCode = out.ExitCode

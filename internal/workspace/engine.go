@@ -16,12 +16,17 @@ import (
 	"workcopy/internal/git"
 	"workcopy/internal/model"
 	"workcopy/internal/project"
+	"workcopy/internal/settings"
 	"workcopy/internal/state"
 )
 
 type Engine struct {
 	Repository *git.Repository
 	WorkRoot   string
+	// Settings carries the user's resolved preferences (agent-context rules and
+	// limits). Nil means built-in defaults, which is what library callers and
+	// tests get unless they set it.
+	Settings *settings.Resolved
 }
 type WorkspaceView struct {
 	ID     string `json:"id"`
@@ -66,28 +71,52 @@ type Report struct {
 	Content       *Content         `json:"content,omitempty"`
 	Catalog       *project.Catalog `json:"catalog,omitempty"`
 	Config        *model.Config    `json:"config,omitempty"`
+	Settings      []settings.Entry `json:"settings,omitempty"`
+	AgentContext  *ContextReport   `json:"agentContext,omitempty"`
 }
 type registration struct {
-	SchemaVersion int                          `json:"schemaVersion"`
-	ID            string                       `json:"id"`
-	Name          string                       `json:"name"`
-	CommonGitDir  string                       `json:"commonGitDir"`
-	Path          string                       `json:"path"`
-	Phase         string                       `json:"phase"`
-	Seed          *model.Snapshot              `json:"seed,omitempty"`
-	Quarantine    string                       `json:"quarantine,omitempty"`
-	DeleteFiles   map[string]model.FileVersion `json:"deleteFiles,omitempty"`
-	DeleteDirs    []string                     `json:"deleteDirs,omitempty"`
-	Force         bool                         `json:"force,omitempty"`
+	SchemaVersion int    `json:"schemaVersion"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	CommonGitDir  string `json:"commonGitDir"`
+	Path          string `json:"path"`
+	Phase         string `json:"phase"`
+	// Branch caches the lane's source ref so list does not parse every manifest.
+	// Registrations written before this field existed fall back to the manifest.
+	Branch      string                       `json:"branch,omitempty"`
+	Seed        *model.Snapshot              `json:"seed,omitempty"`
+	Quarantine  string                       `json:"quarantine,omitempty"`
+	DeleteFiles map[string]model.FileVersion `json:"deleteFiles,omitempty"`
+	DeleteDirs  []string                     `json:"deleteDirs,omitempty"`
+	Force       bool                         `json:"force,omitempty"`
 }
 type lane struct {
 	root     *fsops.Root
 	store    *state.Store
 	snapshot model.Snapshot
 	record   registration
+	// objects feeds Git-sourced content to this lane's transactions.
+	objects *gitObjects
+	// hints holds the line-ending rule for local files that have no baseline
+	// entry yet, filled by scan so every later read agrees with it.
+	hints map[string]string
 }
 
-func (l *lane) close() { l.root.Close() }
+// baselineFor is the version to read a lane file against: its accepted
+// baseline, or for a new file a placeholder carrying its line-ending rule.
+func (l *lane) baselineFor(name string) model.FileVersion {
+	if version, ok := l.snapshot.Baseline.Files[name]; ok {
+		return version
+	}
+	return model.FileVersion{Kind: model.Missing, Eol: l.hints[name]}
+}
+
+func (l *lane) close() {
+	if l.objects != nil {
+		l.objects.Close()
+	}
+	l.root.Close()
+}
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
@@ -95,7 +124,12 @@ func validateName(name string) error {
 	if !validName.MatchString(name) {
 		return model.Fail(2, "invalid-name", "Lane names must be 1-64 letters, digits, dots, underscores or hyphens, starting with a letter or digit")
 	}
-	return fsops.ValidateSourcePath(name)
+	// A lane name is a directory name on every supported platform, so it must
+	// also avoid names Windows reserves (con, nul, aux, com1...) and trailing dots.
+	if err := fsops.ValidateSourcePath(name); err != nil {
+		return model.Fail(2, "invalid-name", "Lane name "+name+" is not portable: it must not be a reserved Windows device name (con, prn, aux, nul, com1-9, lpt1-9), end in a dot, or be .git")
+	}
+	return nil
 }
 func canonical(directory string) (string, error) {
 	absolute, err := filepath.Abs(directory)
@@ -149,7 +183,7 @@ func New(ctx context.Context, repository, root string) (*Engine, error) {
 	if err = noGitAncestor(root); err != nil {
 		return nil, err
 	}
-	return &Engine{r, root}, nil
+	return &Engine{Repository: r, WorkRoot: root}, nil
 }
 func (e *Engine) rootLock() (*fsops.Root, *state.Lock, error) {
 	if err := noGitAncestor(e.WorkRoot); err != nil {
@@ -176,6 +210,9 @@ func (e *Engine) readRegistration(name string) (registration, error) {
 		return record, err
 	}
 	root, err := fsops.OpenRoot(e.WorkRoot)
+	if os.IsNotExist(err) {
+		return record, model.Fail(3, "workspace-not-registered", "No owned lane is registered with this name and workspace root")
+	}
 	if err != nil {
 		return record, err
 	}
@@ -210,11 +247,18 @@ func (e *Engine) openLane(name string) (*lane, error) {
 	if record.Phase != "ready" {
 		return nil, model.Fail(3, "recovery-required", "Lane creation or deletion is incomplete; run recover")
 	}
+	if gone, goneErr := e.laneDirectoryGone(record); goneErr != nil {
+		return nil, goneErr
+	} else if gone {
+		return nil, e.missingFailure(record)
+	}
 	root, err := fsops.OpenRoot(record.Path)
 	if err != nil {
 		return nil, err
 	}
 	store := state.New(root)
+	objects := newGitObjects(context.Background(), e.Repository)
+	store.Objects = objects
 	snapshot, err := store.Load()
 	if err != nil {
 		root.Close()
@@ -242,7 +286,7 @@ func (e *Engine) openLane(name string) (*lane, error) {
 			return nil, model.Fail(3, "recovery-required", "A review operation is incomplete; run recover")
 		}
 	}
-	return &lane{root, store, snapshot, record}, nil
+	return &lane{root: root, store: store, snapshot: snapshot, record: record, objects: objects}, nil
 }
 func (e *Engine) reloadLocked(opened *lane) (*state.Lock, error) {
 	lock, err := opened.store.Lock()
@@ -316,6 +360,9 @@ func (e *Engine) configuration(ctx context.Context, tree map[string]git.TreeEntr
 	if config.SchemaVersion != 1 {
 		return config, fmt.Errorf("unsupported configuration schema")
 	}
+	if err = validateDestroyPolicy(config.Destroy); err != nil {
+		return config, err
+	}
 	return config, nil
 }
 func (e *Engine) scan(ctx context.Context, opened *lane) (map[string]model.FileVersion, error) {
@@ -332,9 +379,15 @@ func (e *Engine) scan(ctx context.Context, opened *lane) (map[string]model.FileV
 			names[name] = true
 		}
 	}
-	current := map[string]model.FileVersion{}
+	eligible := make([]string, 0, len(names))
+	fresh := []string{}
+	copied := opened.contextSet()
 	for name := range names {
 		if name == ".workcopy" || strings.HasPrefix(name, ".workcopy/") {
+			continue
+		}
+		if _, isContext := copied[name]; isContext {
+			// A private copy of agent instructions, not source.
 			continue
 		}
 		mapped := false
@@ -350,11 +403,34 @@ func (e *Engine) scan(ctx context.Context, opened *lane) (map[string]model.FileV
 		if err = fsops.ValidateSourcePath(name); err != nil {
 			return nil, err
 		}
-		version, _, readErr := state.ReadVersion(opened.root, name, opened.snapshot.Baseline.Files[name], opened.snapshot.Manifest.RespectExecutableBits)
-		if readErr != nil {
-			return nil, readErr
+		eligible = append(eligible, name)
+		if _, known := opened.snapshot.Baseline.Files[name]; !known {
+			fresh = append(fresh, name)
 		}
-		current[name] = version
+	}
+	// New files follow the same line-ending rules a committed file would.
+	opened.hints = map[string]string{}
+	if len(fresh) > 0 {
+		plan, planErr := e.attributePlan(ctx, opened.snapshot.Manifest.SyncedCommit, fresh, false)
+		if planErr != nil {
+			return nil, planErr
+		}
+		for _, name := range fresh {
+			opened.hints[name] = plan.rule(name)
+		}
+	}
+	// Reading and hashing is latency-bound on slow filesystems, so it overlaps.
+	versions := make([]model.FileVersion, len(eligible))
+	if err = fsops.Parallel(ctx, len(eligible), func(index int) error {
+		version, _, readErr := state.ReadVersion(opened.root, eligible[index], opened.baselineFor(eligible[index]), opened.snapshot.Manifest.RespectExecutableBits)
+		versions[index] = version
+		return readErr
+	}); err != nil {
+		return nil, err
+	}
+	current := make(map[string]model.FileVersion, len(eligible))
+	for index, name := range eligible {
+		current[name] = versions[index]
 	}
 	liveNames := []string{}
 	for name, version := range current {
@@ -399,6 +475,7 @@ func (e *Engine) Status(ctx context.Context, name string) (Report, error) {
 	report := Report{Command: "status"}
 	opened, err := e.openLane(name)
 	if err != nil {
+		report.Workspace = e.missingView(name, err)
 		return report, err
 	}
 	defer opened.close()
@@ -442,7 +519,7 @@ func (e *Engine) List(ctx context.Context) (Report, error) {
 		if readErr != nil {
 			return report, readErr
 		}
-		report.Workspaces = append(report.Workspaces, WorkspaceView{ID: record.ID, Name: name, Path: record.Path, Phase: record.Phase})
+		report.Workspaces = append(report.Workspaces, e.listView(record))
 	}
 	return report, nil
 }

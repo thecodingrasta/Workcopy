@@ -123,8 +123,10 @@ Build and test inside the lane. Workcopy doesn't run scripts or install packages
 
 - Lanes are workflow boundaries, not security sandboxes. Use host/OS permissions when real isolation matters.
 - `destroy` protects uncommitted contributions and conflicts. `--force` discards your own changes, never shared targets.
-- Local filesystems only. Network shares and cloud-synced folders aren't supported.
-- Git filters, LFS, submodules, files over 64 MiB, and repos over 100,000 tracked paths are rejected explicitly.
+- Local filesystems only. Network shares and cloud-synced folders aren't supported. Under WSL, a repository on `/mnt/c` is slow with the Linux build because every file call crosses to Windows: keep lane storage on the WSL filesystem (`WORKCOPY_ROOT`; about 12 times faster), or use the Windows build. [Which setup to use, what it costs and why](docs/wsl.md).
+- Git filters, LFS, submodules, files over 64 MiB, and repos over 100,000 tracked paths are rejected explicitly, as are tracked paths that cannot be written safely on every platform (reserved Windows names, `:`, trailing dots, `.git`). Each refusal names the path and the fix, and happens before anything is written ([refusals](docs/troubleshooting.md#create-is-refused)).
+
+Preferences you would otherwise repeat on every command or server definition (lane location, owner config, timeouts, limits, Git program, agent-context rules) live in one [settings file](docs/settings.md). New lanes also receive a lean, safe copy of your untracked [agent instructions](docs/agent-context.md) (AGENTS.md, steering, rules, skills for Kiro, Claude, Codex, Gemini, Cursor and more).
 
 See [validation status](docs/validation.md) for what's been tested natively versus compiled only. Read [SECURITY.md](SECURITY.md), [troubleshooting](docs/troubleshooting.md) and [SUPPORT.md](SUPPORT.md) before filing an issue.
 

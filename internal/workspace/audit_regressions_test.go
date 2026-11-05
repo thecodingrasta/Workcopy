@@ -322,8 +322,10 @@ func TestNoUnexpectedTransactionJunkAfterSuccessfulCreate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(lane, filepath.FromSlash(state.JournalPath))); !os.IsNotExist(err) {
 		t.Fatal("journal retained")
 	}
+	// Source is written straight from Git, so the object store is never even
+	// created; an empty one is equally acceptable. Anything else is a duplicate.
 	entries, err := os.ReadDir(filepath.Join(lane, ".workcopy", "objects"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	if len(entries) != 0 {

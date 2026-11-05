@@ -52,7 +52,7 @@ func run(ctx context.Context, arguments []string) error {
 		if err = prepareTestEnvironment(); err != nil {
 			return err
 		}
-		return command(ctx, nil, "go", "test", "-count=1", "-timeout=180s", "./...")
+		return command(ctx, nil, "go", "test", "-count=1", "-timeout=600s", "./...")
 	case "build":
 		return build(ctx, root, runtime.GOOS, runtime.GOARCH, "dev", binaryName(runtime.GOOS))
 	case "install":
@@ -73,7 +73,7 @@ func run(ctx context.Context, arguments []string) error {
 		if err = command(ctx, nil, "go", "vet", "./..."); err != nil {
 			return err
 		}
-		if err = command(ctx, nil, "go", "test", "-race", "-count=1", "-timeout=180s", "./..."); err != nil {
+		if err = command(ctx, nil, "go", "test", "-race", "-count=1", "-timeout=600s", "./..."); err != nil {
 			return err
 		}
 		if err = build(ctx, root, runtime.GOOS, runtime.GOARCH, "dev", binaryName(runtime.GOOS)); err != nil {

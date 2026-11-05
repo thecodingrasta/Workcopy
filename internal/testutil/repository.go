@@ -112,7 +112,20 @@ func sourceRootFromDirectory(directory string) (string, error) {
 
 func (r *Repository) Git(arguments ...string) string {
 	r.T.Helper()
-	command := exec.Command("git", append([]string{"-C", r.Path}, arguments...)...)
+	return r.GitAt(r.Path, "", arguments...)
+}
+
+// GitInput runs git with standard input, for batched plumbing commands.
+func (r *Repository) GitInput(input string, arguments ...string) string {
+	r.T.Helper()
+	return r.GitAt(r.Path, input, arguments...)
+}
+
+// GitAt runs git in any directory (a clone, a review worktree) with the same
+// isolated configuration as the fixture repository.
+func (r *Repository) GitAt(directory, input string, arguments ...string) string {
+	r.T.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
 	environment := []string{}
 	for _, v := range os.Environ() {
 		key := strings.ToUpper(strings.SplitN(v, "=", 2)[0])
@@ -121,6 +134,9 @@ func (r *Repository) Git(arguments ...string) string {
 		}
 	}
 	command.Env = append(environment, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0")
+	if input != "" {
+		command.Stdin = strings.NewReader(input)
+	}
 	body, err := command.CombinedOutput()
 	if err != nil {
 		r.T.Fatalf("git %v: %v\n%s", arguments, err, body)

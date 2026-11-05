@@ -1,11 +1,13 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 
+	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
 	"workcopy/internal/model"
 )
@@ -70,6 +72,32 @@ func (t *Transaction) Add(name string, before, after model.FileVersion, body []b
 		}
 	}
 	return t.AddStaged(name, before, after, external)
+}
+
+// AddFromObject queues a write whose content is the Git object recorded on
+// after. Nothing is staged: the content is read from Git when the transaction
+// is applied or replayed, and verified against its recorded hash then.
+func (t *Transaction) AddFromObject(name string, before, after model.FileVersion) error {
+	if t.store.Objects == nil || after.ObjectID == "" || !after.Exists() {
+		return fmt.Errorf("no Git object source for %s", name)
+	}
+	return t.AddStaged(name, before, after, false)
+}
+
+// sourced reports whether an operation's content comes from Git.
+func (t *Transaction) sourced(version model.FileVersion) bool {
+	return t.store.Objects != nil && version.ObjectID != "" && version.Exists()
+}
+
+// afterBody returns the bytes an operation writes, verified against its hash.
+func (t *Transaction) afterBody(version model.FileVersion) ([]byte, error) {
+	if t.sourced(version) {
+		body, err := t.store.Objects.Read(version.ObjectID)
+		if err == nil && model.Hash(body) == version.Hash && int64(len(body)) == version.Size {
+			return body, nil
+		}
+	}
+	return t.store.Blob(version.Hash)
 }
 
 // AddStaged avoids retaining or re-reading payloads already staged by planning.
@@ -145,22 +173,31 @@ func (t *Transaction) preflight(replay bool) error {
 	if snapshot.Manifest.Generation != t.journal.FromGeneration && (!replay || snapshot.Manifest.Generation != t.journal.Next.Manifest.Generation) {
 		return model.Fail(3, "stale-journal", "Workspace generation changed")
 	}
+	respect := t.store.RespectExecutableBits(t.journal.Next.Manifest.RespectExecutableBits)
 	operations := make(map[string]Operation, len(t.journal.Operations))
 	for _, op := range t.journal.Operations {
 		operations[op.Path] = op
 	}
+	// Each operation is checked independently and read-only, so the checks
+	// overlap: on slow filesystems this is dominated by per-file latency.
+	ctx := context.Background()
+	writes := make([]Operation, 0, len(t.journal.Operations))
 	for _, op := range t.journal.Operations {
 		if op.After.Exists() {
-			if err = t.validateWriteShape(op, operations); err != nil {
-				return err
-			}
+			writes = append(writes, op)
 		}
 	}
-	for _, op := range t.journal.Operations {
-		if err = fsops.ValidateSourcePath(op.Path); err != nil {
+	if err = fsops.Parallel(ctx, len(writes), func(index int) error {
+		return t.validateWriteShape(writes[index], operations)
+	}); err != nil {
+		return err
+	}
+	return fsops.Parallel(ctx, len(t.journal.Operations), func(index int) error {
+		op := t.journal.Operations[index]
+		if err := fsops.ValidateSourcePath(op.Path); err != nil {
 			return err
 		}
-		if op.After.Exists() {
+		if op.After.Exists() && !t.sourced(op.After) {
 			body, blobErr := t.store.Blob(op.After.Hash)
 			if blobErr != nil {
 				return blobErr
@@ -180,15 +217,15 @@ func (t *Transaction) preflight(replay bool) error {
 				return fmt.Errorf("unowned external link")
 			}
 		}
-		current, _, readErr := ReadVersion(t.store.Root, op.Path, op.Before, t.journal.Next.Manifest.RespectExecutableBits)
+		current, _, readErr := ReadVersion(t.store.Root, op.Path, op.Before, respect)
 		if readErr != nil {
 			return readErr
 		}
 		if !current.Equal(op.Before) && (!replay || !current.Equal(op.After)) {
 			return model.Fail(3, "file-changed", "File changed since planning; preserved: "+op.Path)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 func (t *Transaction) Apply() error {
 	if !t.prepared {
@@ -197,43 +234,24 @@ func (t *Transaction) Apply() error {
 	if err := t.preflight(true); err != nil {
 		return err
 	}
-	for _, op := range t.journal.Operations {
-		current, _, err := ReadVersion(t.store.Root, op.Path, op.Before, t.journal.Next.Manifest.RespectExecutableBits)
-		if err != nil {
+	respect := t.store.RespectExecutableBits(t.journal.Next.Manifest.RespectExecutableBits)
+	// Prepare orders deletions first. They run one at a time so a file that is
+	// about to become a directory (or the reverse) is gone before its
+	// replacement is written; the independent writes then overlap.
+	split := 0
+	for split < len(t.journal.Operations) && !t.journal.Operations[split].After.Exists() {
+		split++
+	}
+	for _, op := range t.journal.Operations[:split] {
+		if err := t.applyOne(op, respect); err != nil {
 			return err
 		}
-		if current.Equal(op.After) {
-			continue
-		}
-		if !current.Equal(op.Before) {
-			return model.Fail(3, "file-changed", "File changed during apply; preserved: "+op.Path)
-		}
-		if !op.After.Exists() {
-			err = t.store.Root.Remove(op.Path)
-		} else {
-			if err = t.removeEmptyDestination(op.Path); err != nil {
-				return err
-			}
-			var body []byte
-			body, err = t.store.Blob(op.After.Hash)
-			if err == nil {
-				switch op.After.Kind {
-				case model.Regular:
-					err = t.store.Root.WriteAtomic(op.Path, body, os.FileMode(op.After.Mode))
-				case model.Symlink:
-					if op.ExternalLink {
-						err = t.store.Root.ReplaceDirectoryLink(op.Path, string(body))
-					} else {
-						err = t.store.Root.ReplaceSymlink(op.Path, string(body), false)
-					}
-				default:
-					err = fmt.Errorf("unsupported file kind")
-				}
-			}
-		}
-		if err != nil {
-			return err
-		}
+	}
+	writes := t.journal.Operations[split:]
+	if err := fsops.Parallel(context.Background(), len(writes), func(index int) error {
+		return t.applyOne(writes[index], respect)
+	}); err != nil {
+		return err
 	}
 	if err := t.store.Save(t.journal.Next); err != nil {
 		return err
@@ -243,6 +261,45 @@ func (t *Transaction) Apply() error {
 	}
 	return t.store.collect(t.journal.Next)
 }
+
+// applyOne replays a single journalled operation. It is idempotent: a file
+// already in its final state is left alone, and one that is neither the
+// recorded before nor after state is preserved and reported.
+func (t *Transaction) applyOne(op Operation, respect bool) error {
+	current, _, wasDirectory, err := readVersion(t.store.Root, op.Path, op.Before, respect)
+	if err != nil {
+		return err
+	}
+	if current.Equal(op.After) {
+		return nil
+	}
+	if !current.Equal(op.Before) {
+		return model.Fail(3, "file-changed", "File changed during apply; preserved: "+op.Path)
+	}
+	if !op.After.Exists() {
+		return t.store.Root.Remove(op.Path)
+	}
+	if wasDirectory {
+		if err = t.removeEmptyDestination(op.Path); err != nil {
+			return err
+		}
+	}
+	body, err := t.afterBody(op.After)
+	if err != nil {
+		return err
+	}
+	switch op.After.Kind {
+	case model.Regular:
+		return t.store.Root.WriteAtomic(op.Path, eol.ToLane(body, op.After.Eol), os.FileMode(op.After.Mode))
+	case model.Symlink:
+		if op.ExternalLink {
+			return t.store.Root.ReplaceDirectoryLink(op.Path, string(body))
+		}
+		return t.store.Root.ReplaceSymlink(op.Path, string(body), false)
+	}
+	return fmt.Errorf("unsupported file kind")
+}
+
 func (s *Store) Recover() error {
 	body, err := s.Root.ReadFileLimit(JournalPath, model.MaxMetadataBytes)
 	if err != nil {

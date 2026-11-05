@@ -67,6 +67,67 @@ The approved path checks exact files, ignored additions, staging and detached HE
 
 `status` reports selected source; deletion additionally protects ignored and local-only files. A package restore, editor file or local note may still need preserving. A review export alone is not proof of integration. Use `--force` only as an explicit decision to discard all remaining owned lane contents.
 
+## A lane directory was deleted, or a review is stuck
+
+`list` shows a lane whose directory is gone with phase `missing`; `status` and `recover` say `workspace-missing`. Run `workcopy destroy NAME` to clear its registration and pins; review worktrees stay and are printed with a `git worktree remove` command. A review stuck in `preparing` that `recover` refuses to resume (someone edited it) is released with `workcopy recover NAME --abandon-review`, which deletes no files. See [workflow](workflow.md).
+
+## Every file shows as modified, or review preparation fails with "Review content changed"
+
+Seen with v0.1.3 under WSL on `/mnt/c`: the mount reported every file as executable, so every file looked locally modified. Current versions detect this when the lane is created and also repair existing lanes when they are next read. If you still see mass modifications, check `workcopy doctor` and `core.fileMode`, and make sure a lane is not being edited by a tool that rewrites file modes.
+
+## Line endings differ from my checkout
+
+A lane follows `.gitattributes` and your Git configuration the way `git checkout` would (see [workflow](workflow.md)). Workcopy reads `core.autocrlf` and `core.eol` from the Git program it runs, so under WSL the Linux Git's settings apply, not Windows Git's. `workcopy doctor` prints the values in effect; set them for that Git, or choose the program with `WORKCOPY_GIT`.
+
+## WSL: Windows repositories, slow operations, worktrees Visual Studio cannot open
+
+The full explanation, a decision table and the measurements are on [Windows, WSL and /mnt/c](wsl.md). In short:
+
+**The fix for slow lanes is where they are stored.** Keep lane storage on the WSL filesystem even when the repository stays on `/mnt/c`: set `WORKCOPY_ROOT=/home/you/.workcopy/lanes` in the [settings file](settings.md). On a repository of 1,000 files this took lane creation from 6.4 s to 0.46 s, review from 8.8 s to 0.75 s and `status` from 1.1 s to 0.05 s ([measurements and the reason](validation.md#why-mntc-is-slow-researched)). Microsoft gives the same advice: for the fastest performance, store files in the WSL file system when working from a Linux command line. `workcopy doctor` and `workcopy create` warn when lane storage is on a Windows drive.
+
+Use the Windows `workcopy.exe` for a repository checked out on Windows when Windows tools must see the lanes; give it Windows paths (`wslpath -w`). The Linux build on `/mnt/c` (drvfs/9p) works but is slow, the review worktree it registers with Linux Git is invalid for Windows Git (`git worktree list` marks it `prunable`, and `git gc` can drop its metadata), and a symlink made by `share` is unreadable from Windows. `workcopy doctor` warns about this combination. A repository on the WSL filesystem (`~/src`) with lanes beside it avoids all of it. Passing `/mnt/c/...` to the `.exe`, or `C:\...` to the Linux build, fails with a message naming the path form to use.
+
+## Create is refused
+
+Every refusal below happens before a lane directory, registration or pinned ref exists, so there is nothing to clean up. The error code is stable and is the same from the command line and from MCP.
+
+| Code (exit) | Cause | What to do |
+| --- | --- | --- |
+| `not-a-repository` (3) | The directory is not inside a Git repository | Run from a checkout, or pass `--repo DIRECTORY` |
+| `bare-repository` (3) | The repository has no working tree | Use a normal clone; lanes are cut from a checkout |
+| `no-commits` (3) | The repository has no commit yet | Make an initial commit |
+| `git-unsafe-directory` (3) | Git refuses the directory because another account owns it (common when WSL or a container opens a Windows checkout) | Run as the owner, or add the directory to Git's `safe.directory` yourself. Workcopy never edits Git configuration |
+| `ref-not-found` (2) | `--branch` names nothing Git can resolve to a commit | Check the name with `git branch -a` |
+| `invalid-name` (2) | A lane name must be 1 to 64 letters, digits, dots, underscores or hyphens, start with a letter or digit, and also be a portable directory name: no `con`, `prn`, `aux`, `nul`, `com1` to `com9`, `lpt1` to `lpt9`, no trailing dot | Choose another name |
+| `invalid-selection` (2) | A `--project` value is not a project ID or a usable repository-relative directory (for example `.`) | Run `discover`; use `--all` on the command line to take the whole repository (MCP has no `--all`) |
+| `unknown-profile` (2) | The profile is not in the configuration | Run `discover` to list profiles |
+| `unportable-source-path` (3) | A selected tracked path cannot be written safely on every supported platform: reserved Windows names (`con.txt`), `: ? * < > \| "`, a trailing dot or space, `.git` or `.workcopy` as a component | Leave it out with `--project` or a profile, or rename it in the repository. Workcopy never renames a file for you |
+| `case-collision` (3) | Two tracked paths differ only by case, so they would be one file on Windows or macOS | Rename one in the repository, or leave them out of the selection |
+| `unsupported-source-entry` (3) | A selected path is a Git submodule, a special tree entry, or a file over 64 MiB. The message says which | Leave it out with `--project` or a profile. Lanes do not materialize submodules |
+| `unsafe-source-link` (3) | A tracked symbolic link is absolute, uses a backslash, or leaves the lane | Leave it out, or make the link relative and inside the repository |
+| `symlink-unavailable` (3) | The selection tracks symbolic links and this account cannot create them in the lane root (Windows without Developer Mode or the "Create symbolic links" right, or a FAT or exFAT volume) | Enable Developer Mode, choose a lane root on NTFS, ext4 or APFS, or leave the linked paths out |
+
+A repository that is canonically equivalent in Unicode but not byte-identical (for example `café` written with one code point and with `e` plus a combining accent) holds two files on Linux and Windows and one on macOS. Workcopy creates both where the volume allows it. Where it does not, creation stops with a recoverable error and never overwrites one with the other; `workcopy destroy NAME --force` clears it.
+
+## Merge says Git has no identity
+
+`merge --commit` creates a commit, so Git must know an author and committer. A fresh machine, container or CI job often has neither. The error is `git-identity-missing` (exit 3), is raised before any object is written, and also appears on `--dry-run`; the prepared review is untouched, so approve the same receipt again after fixing it. Either set the identity once (`git config --global user.name "Your Name"` and `git config --global user.email you@example.com`) or export `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (and optionally the `_DATE` variants) for the Workcopy process. These six are the only `GIT_*` variables Workcopy passes to Git. `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_CONFIG_*` are always removed, so an ambient value cannot redirect a lane to another repository.
+
+## A lane on a detached HEAD does not move
+
+A lane created while the checkout is on a detached HEAD (or with `--branch` set to a commit) is pinned to that commit. After you integrate its review, `sync` reports exit 4 ("snapshot has not changed") because there is no branch to follow. Create a new lane from the new commit.
+## A tool call hit its deadline
+
+Large repositories on slow filesystems can need more than the default two minutes. Set `WORKCOPY_TOOL_TIMEOUT=10m` once in the [settings file](settings.md) (or start the server with `--tool-timeout 10m`). A call that was interrupted leaves a recoverable state: call `workcopy_recover`. Workcopy now overlaps file operations, which cut lane creation and review preparation to roughly a third of the previous time on Windows NTFS and WSL drvfs (about half on ext4) in the measurements recorded in [validation](validation.md); `WORKCOPY_IO_WORKERS=1` restores strictly sequential behaviour for diagnosis.
+
+## An agent rule file is missing from a lane
+
+Agent instruction files are copied by a catalogue of known tools plus your own list, and credentials, tool settings, media and history are always refused. Run `workcopy agent-context NAME` (MCP: `workcopy_agent_context`): it lists which agent tools the lane serves and why, known tools that have files but are not served (`notSelected`), what was copied, what was refused with the reason, and directories that look like agent context but are not recognised. If the file belongs to a tool that is not served, switch with `workcopy agent-context NAME --refresh --agent TOOL` or set `WORKCOPY_AGENTS`. If it is not in the catalogue, add the path to `WORKCOPY_AGENT_CONTEXT_INCLUDE` in the settings file. If it is a tool configuration file such as an MCP definition, the owner can opt it in with `WORKCOPY_AGENT_CONTEXT_CONFIG` (and `WORKCOPY_AGENT_CONTEXT_SECRETS` for an exact file that holds a credential). Then `workcopy agent-context NAME --refresh`. See [agent context](agent-context.md).
+
+## A settings value is rejected
+
+Settings are validated when a command starts, so a mistake stops it with the key or line named: an unknown `WORKCOPY_` key (usually a typo), a value out of range, a path for the wrong operating system, or a named settings file that does not exist. `workcopy settings` shows what is in effect and the file in use.
+
 ## Legacy Bash lanes
 
 `legacy --workspace DIRECTORY` reports recognised metadata files and their hashes without changing them. Old baseline semantics may have hidden local contributions. Keep the original lane and inspect its bytes before manually importing changes into a new Go lane. There is no automatic migration.
@@ -82,6 +143,10 @@ Inspect `go env GOOS GOARCH CGO_ENABLED CC`. Full validation requires cgo and, o
 ## PowerShell rejects a downloaded development wrapper
 
 Host execution policy may reject an unsigned downloaded `scripts/dev.ps1`. Run the equivalent `go run ./tools/dev setup`, `test`, `build` or `validate` task directly. Workcopy does not require changing machine execution policy; the distributed CLI and its MCP server do not use this wrapper.
+
+## Windows Defender quarantines a freshly built workcopy.exe
+
+Seen on 2026-11-04 and again on 2026-11-05 (signature 1.463.128.0): Defender reported `Trojan:Win32/Bearfoos.A!ml`, a machine-learning heuristic, for unsigned Go executables, and `go build`, the acceptance tests or a whole `go run ./tools/dev validate` run then failed with "the file contains a virus or potentially unwanted software" or with a wall of unrelated acceptance failures after the test binary was quarantined partway through. Evidence it is a false positive and not Workcopy code: the detection history also lists `a.out.exe` files inside Go's own build directories (compiler probe output), the v0.1.3 source built with the same flags was not flagged, the same source ran clean minutes earlier, and a stamped build (`-ldflags "-X workcopy/internal/cli.Version=..."`, as release builds are) was flagged on the second day even though it was not on the first, so stamping is not a dependable workaround. Workcopy does not obfuscate its code to avoid it. If a gate run fails with many unrelated acceptance tests, check `Get-MpThreatDetection` for a recent detection of a `wc-cli-*\workcopy.exe` before debugging the tests, restore or allow the file, and rerun. Submit the file at the Microsoft Security Intelligence portal as a false positive; do not add an exclusion on a machine you do not own. Check a release candidate with Defender on a Windows machine before publishing it, and sign Windows releases when a certificate is available.
 
 ## Test temporary directory is inside a Git checkout
 

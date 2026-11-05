@@ -13,6 +13,18 @@ Edit the printed lane directory. It is ordinary editable source, not a Git check
 
 `workcopy expand fix-parser src/Extra` adds a project directory. Existing local edits remain in place. Root files and the lane's saved selection rules remain consistent across status, sync and review.
 
+## Agent instructions
+
+Each new lane receives a private copy of your untracked agent instruction files (rules, steering, prompts, skills) so an agent in the lane works with the project's guidance. They are not source: `status`, reviews and commits ignore them, and `destroy` discards them. `agent-context --refresh` (and `sync`) bring them up to date. See [agent context](agent-context.md).
+
+## Line endings and file modes
+
+A lane is written the way the repository's own checkout would be written, per path: `.gitattributes` (`text`, `eol`, `crlf`) at the pinned commit decides, then `core.autocrlf` and `core.eol` from your Git configuration. In a repository with `*.cs text eol=crlf`, `.cs` files are CRLF in the lane even when the Linux build creates it; in an LF repository they stay LF. The decision table is a port of Git's own and is tested byte for byte against `git checkout`.
+
+Workcopy compares, hashes and merges the LF form Git stores. An editor that rewrites line endings therefore changes nothing, cannot turn an upstream edit into a conflict, and does not show as a modification. New files follow the same rules, so a CRLF file created by Visual Studio in an `eol=crlf` repository is committed as LF. A blob that already contains a carriage return is left exactly as committed, because converting it could not be reversed; Git itself reports such files as needing renormalisation.
+
+Execute bits follow `core.fileMode`. A lane does not track them when the repository sets `core.fileMode=false`, on Windows, or when the lane's filesystem reports every file as executable (WSL's `/mnt/c` without metadata, FAT). Workcopy detects the last case itself, including for lanes created by v0.1.3.
+
 ## Sync
 
 ```sh
@@ -60,7 +72,7 @@ After reviewing the exact prepared contents, request an explicit commit:
 workcopy merge NAME --commit --approve --review RECEIPT --message MESSAGE
 ```
 
-Workcopy checks the lane generation, review content, index and detached HEAD. It then commits through an isolated temporary index. It does not run Git hooks, sign the commit, attach a branch or push.
+Workcopy checks the lane generation, review content, index and detached HEAD. It then commits through an isolated temporary index. It does not run Git hooks, sign the commit, attach a branch or push. Git must know an author and committer: set `user.name` and `user.email`, or export `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` for the Workcopy process. Without one the command stops with `git-identity-missing` before anything is written, and the same receipt can be approved again afterwards ([details](troubleshooting.md#merge-says-git-has-no-identity)).
 
 A changed review is not silently overwritten or re-approved. Use normal Git to manage a deliberately edited review yourself, or preserve it and prepare a new lane contribution. Workcopy's approval path is for unchanged receipts.
 
@@ -73,9 +85,13 @@ workcopy destroy fix-parser --dry-run
 workcopy destroy fix-parser
 ```
 
-Ordinary deletion refuses local changes, deleted source files, conflicts and local-only files, including ignored files. A previously exported or committed review does not bypass this check. Only use `--force` after independently preserving anything valuable and explicitly deciding to discard the lane.
+Ordinary deletion refuses local changes, deleted source files, conflicts and local-only files, including ignored files. An owner who wants build output to be disposable lists it under `destroy.discard` in an owner-supplied `--config` file (see [configuration](configuration.md)); only untracked files matching those patterns are then discarded without `--force`. A previously exported or committed review does not bypass this check. Only use `--force` after independently preserving anything valuable and explicitly deciding to discard the lane.
 
 Deletion quarantines the owned lane, inventories its entries and removes links rather than their targets. Recovery does not broaden an earlier deletion decision to cover newly created files. Separate review worktrees remain available and must be managed through ordinary Git worktree commands when no longer needed.
+
+### A lane whose directory was deleted
+
+If a lane directory is removed outside Workcopy, `list` shows it with phase `missing`, and `status`, `sync` and `recover` fail with `workspace-missing` naming the directory and the registration file. `workcopy destroy NAME` clears it: it removes the registration and Workcopy's `refs/workcopy` pins for that lane and nothing else. Review worktrees are kept and listed with the exact `git worktree remove` command for each. `--dry-run` shows the same without changing anything.
 
 ## Interrupted operations
 
@@ -85,5 +101,7 @@ workcopy recover fix-parser
 ```
 
 Recovery verifies recorded ownership and before/after states. It resumes a pending creation, transaction, review preparation, review commit or deletion. Later edits that do not match the recorded operation block replay. A process interrupted between two distinct journalled stages may need another `recover` invocation; a no-op returns exit code 4.
+
+If a review was interrupted and its half-built worktree has since been edited, `recover` refuses to overwrite it and the lane stays blocked. `workcopy recover NAME --abandon-review` (CLI only, not offered over MCP) drops that unfinished receipt so the lane works again. It deletes no files; remove the leftover review with the `git worktree remove` command it prints, then run `merge` for a fresh review. A review that reached `prepared` or beyond is never abandoned this way.
 
 Do not remove journals or registry files to clear an error. Preserve the complete workspace root and consult [troubleshooting](troubleshooting.md).

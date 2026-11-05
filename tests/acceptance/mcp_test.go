@@ -30,6 +30,7 @@ func startMCPArgs(t *testing.T, args ...string) *mcp.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
+	recordCommand("mcp")
 	cmd := exec.Command(executable, append([]string{"mcp"}, args...)...)
 	cmd.Stderr = os.Stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "workcopy-acceptance", Version: "1"}, nil)
@@ -382,6 +383,7 @@ func TestMCPLegacyClientAndProtocolOnlyStdout(t *testing.T) {
 	r.Commit("base")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	recordCommand("mcp")
 	cmd := exec.CommandContext(ctx, executable, "mcp", "--repo", r.Path, "--root", filepath.Join(r.Parent, "lanes"))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
