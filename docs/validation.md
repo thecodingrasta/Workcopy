@@ -54,8 +54,21 @@ Each fix was also checked by removing it and confirming the matching test fails.
 | WSL Debian, repository and lanes on `/mnt/c` without metadata (every file reports mode 777) | Engine packages and the whole acceptance package passed; slow, as documented in [WSL](wsl.md) |
 | WSL Debian, strictly sequential I/O (`WORKCOPY_IO_WORKERS=1`) | Passed |
 | Windows Git against Linux Git, both directions (`tests/interop`) | Passed |
-| macOS (Apple silicon and Intel) | Not run locally. The same tests run in the CI gate; the canonically-equivalent-Unicode test is the one most likely to behave differently there, because APFS treats `é` written two ways as one file |
+| Windows with a hosted runner's Git configuration (`core.autocrlf=true` globally) | Full gate passed; this configuration reproduced the shallow-clone CI failure before the fix |
+| macOS (Apple silicon and Intel) | Not run locally; the first CI run passed everything except the Unicode-name test, which exposed the unfinished-lane and name-collision fixes described in the changelog. The same tests run in the CI gate; the canonically-equivalent-Unicode test is the one most likely to behave differently there, because APFS treats `é` written two ways as one file |
 
+### Reproducing a hosted runner's Git configuration
+
+A developer machine and a hosted runner configure Git differently, and a test that passes on one can fail on the other. The Windows runners install Git for Windows with `core.autocrlf=true` at system level, so a repository without its own setting (a plain `git clone`, for instance) gets CRLF checkouts, and Workcopy correctly mirrors that. Fixtures built with `testutil.NewRepository` pin `core.autocrlf=false` locally; anything else must pin its own. To run the suite the way the runner sees it, give the test process a global Git configuration in a scratch home directory:
+
+```powershell
+$scratch = Join-Path $env:TEMP 'runner-home'; New-Item -ItemType Directory -Force $scratch | Out-Null
+Set-Content (Join-Path $scratch '.gitconfig') "[core]`n`tautocrlf = true`n`tsymlinks = true`n[user]`n`tuseConfigOnly = true"
+$env:HOME = $scratch; $env:USERPROFILE = $scratch
+go run ./tools/dev validate
+```
+
+This reproduced the Windows CI failure of the shallow-clone shape exactly before it was fixed. Set `GOCACHE`, `GOPATH` and `GOMODCACHE` explicitly when you change `HOME`, or Go will download its modules again.
 ### Running the lane fixtures natively on Linux
 
 CI installs the toolchains with `actions/setup-node` and `actions/setup-dotnet`. To repeat it on a Linux or WSL machine without touching the system packages, unpack them under your home directory:

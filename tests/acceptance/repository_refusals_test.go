@@ -195,7 +195,10 @@ func TestCaseOnlyDifferencesAreRefusedOnEveryPlatform(t *testing.T) {
 }
 
 // Unicode normalization forms are distinct names on Linux and Windows but the
-// same file on macOS. Either outcome is acceptable; silently losing one file is not.
+// same file on macOS (APFS and HFS+). Exactly two outcomes are correct: both
+// files exist with their own content, or creation is refused before anything is
+// written, naming the collision. Overwriting one with the other, or a half-built
+// lane, is not. The expected outcome is decided by the volume, not by the OS name.
 func TestCanonicallyEquivalentUnicodeNamesNeverOverwriteEachOther(t *testing.T) {
 	t.Parallel()
 	r := testutil.NewRepository(t)
@@ -214,18 +217,30 @@ func TestCanonicallyEquivalentUnicodeNamesNeverOverwriteEachOther(t *testing.T) 
 		if errFirst != nil || errSecond != nil || string(first) != "precomposed\n" || string(second) != "decomposed\n" {
 			t.Fatalf("create reported success but a canonically equivalent name lost its content: %v %v %q %q", errFirst, errSecond, first, second)
 		}
+		if os.SameFile(mustStat(t, filepath.Join(lane, filepath.FromSlash(precomposed))), mustStat(t, filepath.Join(lane, filepath.FromSlash(decomposed)))) {
+			t.Fatal("the two spellings were reported as separate files but are one on this volume")
+		}
 		laneReport(t, lane, nil, 0, "destroy", "--force")
 		return
 	}
-	errorCodeValue, _ := errorOf(t, stdout)
-	if errorCodeValue == "" {
-		t.Fatalf("a refusal must carry an error code: %s", stdout)
+	errorCodeValue, message := errorOf(t, stdout)
+	if code != 3 || errorCodeValue != "name-collision" || !strings.Contains(message, "Nothing was created") {
+		t.Fatalf("a volume that equates the two spellings must be refused up front with name-collision, got exit %d: %s", code, stdout)
 	}
-	// A refusal may leave recoverable state; the owner must always be able to clear it.
-	laneReport(t, r.Path, nil, 0, "destroy", "l1", "--force", "--root", root)
 	assertNothingCreated(t, r.Path, root)
+	// The advertised way out works: leave the colliding directory out.
+	created := laneReport(t, r.Path, nil, 0, "create", "l2", "--project", "keep.txt", "--root", root)
+	laneReport(t, created.Workspace.Path, nil, 0, "destroy", "--force")
 }
 
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
 func TestUnsafeSymbolicLinksAreRefusedBeforeAnythingIsWritten(t *testing.T) {
 	t.Parallel()
 	for name, target := range map[string]string{

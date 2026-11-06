@@ -115,7 +115,7 @@ Results contain `schemaVersion:1`, `exitCode`, and `scope`, `report`, `context`,
 | `workcopy_share` | Explicit link to owner-allowlisted dependency target |
 | `workcopy_unshare` | Remove link, retaining target |
 | `workcopy_recover` | Guarded interrupted-operation recovery |
-| `workcopy_destroy` | Guarded clean-lane cleanup, no force. Clears a lane whose directory was deleted outside Workcopy and discards build output the owner listed in `destroy.discard`. Review leftovers are reported, never deleted |
+| `workcopy_destroy` | Guarded clean-lane cleanup, no force; an unfinished creation can only be discarded by the owner with `destroy NAME --force` on the command line. Clears a lane whose directory was deleted outside Workcopy and discards build output the owner listed in `destroy.discard`. Review leftovers are reported, never deleted |
 
 Mutations require `dryRun`. Creation requires `projects` or `profile`; implicit all-source selection is unavailable. Expand accepts project IDs/paths. Resolve takes `name`, `path`, current `token`, and `mode`: `local`, `upstream`, `delete`, `file`. File mode requires a repository-relative `fromFile` inside the owned lane. Later local edits require deliberate `expectedLocal` hash acknowledgement after inspection.
 

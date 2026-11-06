@@ -447,6 +447,11 @@ func TestRepositoryShapesRoundTripThroughTheRealBinary(t *testing.T) {
 			shallow := &testutil.Repository{T: t, Parent: origin.Parent, Path: clone}
 			shallow.Git("config", "user.name", "Fixture Author")
 			shallow.Git("config", "user.email", "fixture@example.invalid")
+			// A clone does not inherit the fixture's local settings. Git for Windows
+			// installs core.autocrlf=true at system level, so without this a lane
+			// correctly mirrors a CRLF checkout and the byte-for-byte comparison
+			// here would not hold. Line-ending behaviour has its own tests.
+			shallow.Git("config", "core.autocrlf", "false")
 			return shapeFor(shallow)
 		},
 		"linked worktree": func(t *testing.T) shapeCase {
@@ -528,6 +533,12 @@ func TestRepositoryShapesRoundTripThroughTheRealBinary(t *testing.T) {
 				{"100644", "src/drop.txt", "to be deleted\n"},
 				{"120000", "link-to-script", "bin/run.sh"},
 				{"120000", "src/link-up", "../bin/run.sh"},
+				// Links to directories sort before the directories they point at. On
+				// Windows a link is a file link or a directory link depending on what
+				// its target is when it is made, so these must be written last.
+				{"100644", "releases/v1/app.txt", "release one\n"},
+				{"120000", "a-current", "releases/v1"},
+				{"120000", "docs-link", "src"},
 			}, true)
 			return shapeFor(r)
 		}

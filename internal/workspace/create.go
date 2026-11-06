@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"workcopy/internal/agents"
@@ -221,6 +222,11 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	}
 	// Fail before any pin, registration or directory exists, so a host that cannot
 	// create symbolic links leaves nothing behind to recover.
+	if collision, collisionErr := findNameCollision(registry, names); collisionErr != nil {
+		return report, collisionErr
+	} else if collision != nil {
+		return report, nameCollisionFailure(collision)
+	}
 	for filename, version := range next.Baseline.Files {
 		if version.Kind != model.Symlink {
 			continue
@@ -241,7 +247,7 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		return report, err
 	}
 	if err = e.finishCreation(ctx, record); err != nil {
-		return report, fmt.Errorf("creation preserved its recovery state; run recover: %w", err)
+		return report, fmt.Errorf("creation did not finish and its recovery state was kept. Run recover to retry; if the cause is permanent (the message below says why), discard the partly created lane with destroy %s --force: %w", name, err)
 	}
 	record.Phase = "ready"
 	record.Seed = nil
@@ -266,6 +272,27 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	}
 	return report, nil
 }
+
+// findNameCollision asks the lane volume whether any two selected paths are one
+// entry on it. It is a variable so a test can stand in for a volume (macOS) that
+// the host running the tests does not have.
+var findNameCollision = func(volume *fsops.Root, names []string) (*fsops.NameCollision, error) {
+	return volume.FindNameCollision(names)
+}
+
+// nameCollisionFailure explains two tracked paths that the lane volume stores
+// as one entry. The spellings are quoted with escapes because the usual cause,
+// the same accented name written two ways, looks identical on screen.
+func nameCollisionFailure(collision *fsops.NameCollision) error {
+	pair := strconv.QuoteToASCII(collision.Second)
+	if collision.First != "" {
+		pair = strconv.QuoteToASCII(collision.First) + " and " + pair
+	} else {
+		pair += " and an earlier path"
+	}
+	return model.Fail(3, "name-collision", "Two tracked paths are the same file on the volume that would hold the lane: "+pair+". This happens when a volume treats canonically equivalent Unicode spellings as one name (macOS does) or ignores case. Nothing was created. Leave one of them out with --project or a profile, rename one in the repository, or choose a lane root on a volume that keeps them apart.")
+}
+
 func validateLink(name, target string) error {
 	unsafe := func(reason string) error {
 		return model.Fail(3, "unsafe-source-link", "Tracked symbolic link "+name+" is refused ("+reason+"). Links must be relative and stay inside the lane; leave the path out with --project or a profile.")

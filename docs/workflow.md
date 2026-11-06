@@ -91,6 +91,8 @@ Deletion quarantines the owned lane, inventories its entries and removes links r
 
 ### A lane whose directory was deleted
 
+A lane whose creation did not finish shows the phase `creating`. `recover` retries it; if the cause is permanent, `destroy NAME --force` discards the partial lane (see [troubleshooting](troubleshooting.md#a-lane-is-stuck-in-the-creating-phase)).
+
 If a lane directory is removed outside Workcopy, `list` shows it with phase `missing`, and `status`, `sync` and `recover` fail with `workspace-missing` naming the directory and the registration file. `workcopy destroy NAME` clears it: it removes the registration and Workcopy's `refs/workcopy` pins for that lane and nothing else. Review worktrees are kept and listed with the exact `git worktree remove` command for each. `--dry-run` shows the same without changing anything.
 
 ## Interrupted operations

@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"workcopy/internal/eol"
 	"workcopy/internal/fsops"
@@ -180,7 +181,7 @@ func readVersion(root *fsops.Root, name string, baseline model.FileVersion, resp
 	}
 	if linkCandidate(info.Mode(), runtime.GOOS) {
 		target, err := root.Readlink(name)
-		body := []byte(target)
+		body := []byte(canonicalLinkTarget(target, runtime.GOOS))
 		return model.Version(model.Symlink, 0120000, body), body, false, err
 	}
 	if info.IsDir() {
@@ -210,6 +211,29 @@ func readVersion(root *fsops.Root, name string, baseline model.FileVersion, resp
 	version := model.Version(model.Regular, mode, body)
 	version.Eol = token
 	return version, body, false, nil
+}
+
+// canonicalLinkTarget returns a link target in the form Git stores it.
+//
+// Windows only resolves a relative symlink target that uses backslashes, so
+// Go converts the slashes of a target when it creates the link (os.Symlink, and
+// os.Root.Symlink in the Go 1.27 toolchain this project pins; the CI job on Go
+// 1.25 did not show the mismatch) and returns the backslash form from Readlink.
+// Git, the baseline and the review commit all hold the slash form. Without this
+// a link Workcopy just wrote would read back as an edit. Source links are
+// validated to be relative and never contain a backslash, so on Windows every
+// backslash in a source link is a separator; elsewhere a backslash is an
+// ordinary character and the target is returned untouched.
+//
+// Only relative targets are converted. A shared-dependency mapping is an
+// absolute directory link (C:\cache\deps, \\server\share, \??\C:\...) that
+// Workcopy records and compares in the form Windows reports, so absolute
+// targets are returned exactly as read.
+func canonicalLinkTarget(target, platform string) string {
+	if platform != "windows" || target == "" || target[0] == '\\' || target[0] == '/' || (len(target) >= 2 && target[1] == ':') {
+		return target
+	}
+	return strings.ReplaceAll(target, `\`, "/")
 }
 
 func linkCandidate(mode os.FileMode, platform string) bool {

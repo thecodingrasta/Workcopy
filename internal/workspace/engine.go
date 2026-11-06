@@ -245,7 +245,7 @@ func (e *Engine) openLane(name string) (*lane, error) {
 		return nil, err
 	}
 	if record.Phase != "ready" {
-		return nil, model.Fail(3, "recovery-required", "Lane creation or deletion is incomplete; run recover")
+		return nil, model.Fail(3, "recovery-required", "Lane creation or deletion is incomplete; run recover. If recover fails the same way, the owner can discard an unfinished creation with destroy NAME --force")
 	}
 	if gone, goneErr := e.laneDirectoryGone(record); goneErr != nil {
 		return nil, goneErr

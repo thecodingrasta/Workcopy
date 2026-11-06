@@ -247,11 +247,18 @@ func (t *Transaction) Apply() error {
 			return err
 		}
 	}
-	writes := t.journal.Operations[split:]
-	if err := fsops.Parallel(context.Background(), len(writes), func(index int) error {
-		return t.applyOne(writes[index], respect)
-	}); err != nil {
-		return err
+	// Regular files are written before symbolic links, each group concurrently.
+	// Windows decides at creation whether a link is a file link or a directory
+	// link by looking at what its target is at that moment, so a link to a
+	// directory made before the directory exists is the wrong kind and cannot be
+	// opened. Elsewhere the order is invisible.
+	files, links := splitLinkWrites(t.journal.Operations[split:])
+	for _, batch := range [][]Operation{files, links} {
+		if err := fsops.Parallel(context.Background(), len(batch), func(index int) error {
+			return t.applyOne(batch[index], respect)
+		}); err != nil {
+			return err
+		}
 	}
 	if err := t.store.Save(t.journal.Next); err != nil {
 		return err
@@ -260,6 +267,19 @@ func (t *Transaction) Apply() error {
 		return err
 	}
 	return t.store.collect(t.journal.Next)
+}
+
+// splitLinkWrites separates operations that write a symbolic link from the rest,
+// keeping the journal order within each group.
+func splitLinkWrites(operations []Operation) (files, links []Operation) {
+	for _, op := range operations {
+		if op.After.Kind == model.Symlink {
+			links = append(links, op)
+		} else {
+			files = append(files, op)
+		}
+	}
+	return files, links
 }
 
 // applyOne replays a single journalled operation. It is idempotent: a file
