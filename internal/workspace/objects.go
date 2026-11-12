@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"workcopy/internal/git"
@@ -58,6 +59,47 @@ func (g *gitObjects) Read(objectID string) ([]byte, error) {
 		g.progress(g.reads)
 	}
 	return body, nil
+}
+
+// Stream implements state.ObjectSource for objects too large to hold. The
+// shared Git pipe is held for the whole copy, so one large object is written at
+// a time; the memory cost is one fixed buffer however large the file is.
+func (g *gitObjects) Stream(objectID string, w io.Writer) (int64, error) {
+	if err := g.ctx.Err(); err != nil {
+		return 0, err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.err != nil {
+		return 0, g.err
+	}
+	if g.reader == nil {
+		g.reader, g.err = g.repository.Reader(g.ctx)
+		if g.err != nil {
+			return 0, g.err
+		}
+	}
+	size, err := g.reader.Stream(objectID, &contextWriter{ctx: g.ctx, w: w})
+	if err != nil {
+		g.err = err
+		return size, err
+	}
+	g.reads++
+	return size, nil
+}
+
+// contextWriter stops a long copy when the operation is cancelled, so a deadline
+// is honoured between buffers and not only between files.
+type contextWriter struct {
+	ctx context.Context
+	w   io.Writer
+}
+
+func (c *contextWriter) Write(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.w.Write(p)
 }
 
 // Close stops the Git process.

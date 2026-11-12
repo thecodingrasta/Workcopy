@@ -16,11 +16,11 @@ import (
 // the ones with a documented guard, a deliberate rejection-path call.
 func TestMCPDiscoverListExpandSolutionShareUnshareRecover(t *testing.T) {
 	r := testutil.NewRepository(t)
-	r.Write("projects/a/go.mod", "module fixture/a\n\ngo 1.25.0\n")
+	r.Write("projects/a/go.mod", "module fixture/a\n\ngo 1.27.4\n")
 	r.Write("projects/a/value.go", "package a\nfunc Value() int { return 1 }\n")
 	r.Write("projects/a/value_test.go", "package a\nimport \"testing\"\nfunc TestValue(t *testing.T) { if Value() != 1 { t.Fatal(Value()) } }\n")
 	r.Write("projects/a/A.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n")
-	r.Write("projects/b/go.mod", "module fixture/b\n\ngo 1.25.0\n")
+	r.Write("projects/b/go.mod", "module fixture/b\n\ngo 1.27.4\n")
 	r.Write("projects/b/value.go", "package b\nfunc Value() int { return 2 }\n")
 	r.Write("projects/b/value_test.go", "package b\nimport \"testing\"\nfunc TestValue(t *testing.T) { if Value() != 2 { t.Fatal(Value()) } }\n")
 	r.Write("App.sln", "Microsoft Visual Studio Solution File, Format Version 12.00\n"+

@@ -55,6 +55,35 @@ func entryVersion(entry git.TreeEntry, body []byte, rule string) (model.FileVers
 	}
 	return version, nil
 }
+
+// entryVersionFrom describes a Git tree entry as a lane file, reading from the
+// open blob reader only what it needs. A small blob is read whole and returned
+// with the version. A large regular file is hashed as it streams and its body is
+// nil: it is never held in memory, never line-ending converted (the version is of
+// its raw bytes), and is written later straight from its Git object.
+func entryVersionFrom(reader *git.Reader, entry git.TreeEntry, rule string) (model.FileVersion, []byte, error) {
+	if (entry.Mode == 0100644 || entry.Mode == 0100755) && entry.Size > model.InlineFileBytes() {
+		sum, size, err := reader.HashStream(entry.ObjectID)
+		if err != nil {
+			return model.FileVersion{}, nil, err
+		}
+		if size != entry.Size {
+			return model.FileVersion{}, nil, fmt.Errorf("blob %s is %d bytes but its tree entry says %d", entry.ObjectID, size, entry.Size)
+		}
+		mode := uint32(0644)
+		if entry.Mode == 0100755 {
+			mode = 0755
+		}
+		return model.FileVersion{Kind: model.Regular, Mode: mode, Hash: sum, Size: size, ObjectID: entry.ObjectID}, nil, nil
+	}
+	body, err := reader.Read(entry.ObjectID)
+	if err != nil {
+		return model.FileVersion{}, nil, err
+	}
+	version, err := entryVersion(entry, body, rule)
+	return version, body, err
+}
+
 func validateTree(tree map[string]git.TreeEntry, selection model.Selection, requirePaths bool) ([]string, error) {
 	names := []string{}
 	for name, entry := range tree {
@@ -70,8 +99,8 @@ func validateTree(tree map[string]git.TreeEntry, selection model.Selection, requ
 		if entry.Kind != "blob" {
 			return nil, model.Fail(3, "unsupported-source-entry", "Selected path is a special Git tree entry that lanes do not materialize: "+name)
 		}
-		if entry.Size > model.MaxFileBytes {
-			return nil, model.Fail(3, "unsupported-source-entry", fmt.Sprintf("Selected file exceeds the 64 MiB lane file limit (%d bytes): %s", entry.Size, name))
+		if entry.Size > model.MaxFileBytes() {
+			return nil, model.Fail(3, "unsupported-source-entry", fmt.Sprintf("Selected file is %d bytes, over the %d MiB file limit: %s. Raise WORKCOPY_MAX_FILE_MIB in the settings file, or leave the file out with --project or a profile.", entry.Size, model.MaxFileBytes()>>20, name))
 		}
 		names = append(names, name)
 	}
@@ -145,7 +174,7 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	} else if !os.IsNotExist(err) {
 		return report, err
 	}
-	report.Plan = &Plan{Action: "create", Files: names, Effects: []string{"Read the pinned commit, not the working checkout", "Materialize selected tracked source without a .git entry"}}
+	report.Plan = &Plan{Action: "create", Files: names, FileCount: len(names), Effects: []string{"Read the pinned commit, not the working checkout", "Materialize selected tracked source without a .git entry"}}
 	for _, name := range names {
 		report.Plan.SourceBytes += tree[name].Size
 	}
@@ -205,11 +234,10 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	}
 	next := model.Snapshot{Manifest: model.Manifest{ContextAgents: contextAgents, SchemaVersion: 1, ID: id, Name: name, WorkspacePath: destination, RepositoryRoot: e.Repository.Root, CommonGitDir: e.Repository.CommonDir, WorkRoot: e.WorkRoot, Branch: branch, SyncedCommit: commit, Generation: 2, Phase: "ready", RespectExecutableBits: respect, OwnerConfig: options.ConfigData != nil || options.ConfigPath != "", Config: config, Selection: selection}, Baseline: model.Baseline{Files: map[string]model.FileVersion{}}, Conflicts: []model.Conflict{}}
 	for _, filename := range names {
-		body, readErr := reader.Read(tree[filename].ObjectID)
-		if readErr != nil {
-			return report, readErr
+		if err = ctx.Err(); err != nil {
+			return report, err
 		}
-		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
+		version, body, versionErr := entryVersionFrom(reader, tree[filename], plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}
@@ -247,6 +275,13 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		return report, err
 	}
 	if err = e.finishCreation(ctx, record); err != nil {
+		if ctx.Err() != nil {
+			// Whatever failed first, the operation was cut off, and what failed after
+			// the cut (a staged object that was never written, a half-made directory)
+			// is a consequence and not a cause. Report the cancellation alone, in a form
+			// callers recognise, so a low-level file error never stands in for it.
+			return report, fmt.Errorf("creation was interrupted and its recovery state was kept. Run recover to finish it; if recover keeps failing, the owner can discard the partly created lane with destroy %s --force: %w", name, ctx.Err())
+		}
 		return report, fmt.Errorf("creation did not finish and its recovery state was kept. Run recover to retry; if the cause is permanent (the message below says why), discard the partly created lane with destroy %s --force: %w", name, err)
 	}
 	record.Phase = "ready"
@@ -424,7 +459,7 @@ func (e *Engine) Expand(ctx context.Context, name string, requested []string, dr
 	if err != nil {
 		return report, err
 	}
-	report.Plan = &Plan{Action: "expand", Files: additions}
+	report.Plan = &Plan{Action: "expand", Files: additions, FileCount: len(additions)}
 	for _, filename := range additions {
 		report.Plan.SourceBytes += tree[filename].Size
 	}
@@ -454,22 +489,20 @@ func (e *Engine) Expand(ctx context.Context, name string, requested []string, dr
 				return report, model.Fail(3, "mapping-overlaps-source", "Detach the dependency mapping before expanding into it")
 			}
 		}
-		body, readErr := reader.Read(tree[filename].ObjectID)
-		if readErr != nil {
-			return report, readErr
-		}
-		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
+		version, body, versionErr := entryVersionFrom(reader, tree[filename], plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}
-		if _, readErr = opened.root.Lstat(filename); readErr == nil {
+		if _, readErr := opened.root.Lstat(filename); readErr == nil {
 			return report, model.Fail(3, "expansion-obstructed", "Expansion would overwrite existing local content: "+filename)
 		} else if !os.IsNotExist(readErr) {
 			return report, readErr
 		}
 		next.Baseline.Files[filename] = version
-		if _, err = opened.store.PutBlob(body); err != nil {
-			return report, err
+		if !version.Large() {
+			if _, err = opened.store.PutBlob(body); err != nil {
+				return report, err
+			}
 		}
 		values = append(values, addition{filename, version})
 	}

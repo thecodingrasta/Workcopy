@@ -90,7 +90,7 @@ func TestDoctorReportsGitProgramLineEndingsAndRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitPath, _ := exec.LookPath("git")
-	for _, want := range []string{"Workcopy test-version", "Git: git version", gitPath, "Repository: ", "core.autocrlf=true", "No installations"} {
+	for _, want := range []string{"Workcopy test-version", "Git: git version", gitPath, "Repository: ", "core.autocrlf=true", "No installations", "Repository volume: ", "Lane storage volume: ", "block clone "} {
 		if !strings.Contains(report.Message, want) {
 			t.Errorf("doctor message lacks %q:\n%s", want, report.Message)
 		}

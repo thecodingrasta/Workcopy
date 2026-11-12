@@ -149,10 +149,10 @@ func release(ctx context.Context, root, version string, nativeOnly bool) error {
 // an owner's local caches, metadata, binaries or unrelated root files.
 func sourceFiles(root string) ([]archiveEntry, error) {
 	topFiles := map[string]bool{}
-	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "COPYRIGHT", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.md", "CHANGELOG.md", "AGENTS.md", ".gitignore", ".editorconfig", ".gitattributes"} {
+	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "COPYRIGHT", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.md", "AGENTS.md", ".gitignore", ".editorconfig", ".gitattributes"} {
 		topFiles[name] = true
 	}
-	directories := map[string]bool{"cmd": true, "internal": true, "tools": true, "tests": true, "docs": true, "schema": true, "examples": true, "scripts": true, ".github": true, "prebuilt": true}
+	directories := map[string]bool{"cmd": true, "internal": true, "tools": true, "tests": true, "docs": true, "schema": true, "examples": true, "scripts": true, ".github": true}
 	entries := []archiveEntry{}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -174,9 +174,6 @@ func sourceFiles(root string) ([]archiveEntry, error) {
 			return nil
 		}
 		if !directories[top] && !topFiles[relative] {
-			return nil
-		}
-		if top == "prebuilt" && relative != "prebuilt/README.md" {
 			return nil
 		}
 		if !entry.Type().IsRegular() {

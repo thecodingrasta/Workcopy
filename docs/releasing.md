@@ -4,7 +4,7 @@ Release from a reviewed commit. Keep binary/source checksums tied to that exact 
 
 ## Validate
 
-Run `go run ./tools/dev validate` natively on Windows, Linux and macOS with a supported patched Go release. CI also exercises the Go 1.25 API floor. Record architecture and skipped tests; cross-compilation is not native execution. See [validation status](validation.md) and [compiler prerequisites](../CONTRIBUTING.md#validation-prerequisites).
+Run `go run ./tools/dev validate` natively on Windows, Linux and macOS with the pinned patched Go release (1.27.4). Record architecture and skipped tests; cross-compilation is not native execution. See [validation status](validation.md) and [compiler prerequisites](../CONTRIBUTING.md#validation-prerequisites).
 
 CI runs formatting, vet, race tests, real CLI/MCP workflows, selected .NET and offline Node fixtures, and vulnerability scanning. Scanner/network failures fail the check. Consumer project builds still require their own inputs and approved dependency policy.
 
@@ -15,7 +15,7 @@ go run ./tools/dev clean
 go run ./tools/dev package v0.1.0-rc.1
 ```
 
-Use the actual candidate version. Add `--native` to package only the current OS/architecture. Packaging requires a supported patched Go release, at least Go 1.25.
+Use the actual candidate version. Add `--native` to package only the current OS/architecture. Packaging requires the pinned patched Go release (1.27.4 or newer).
 
 The task produces six directly runnable per-platform binaries, a matching `_source.tar.gz` archive and `dist/SHA256SUMS`. Binary names are `workcopy_<version>_<os>_<arch>` with `.exe` on Windows. The source archive includes public source, build scripts, pinned vendored module source and compiler information. Vendoring happens in a private disposable copy; it does not change the repository or global caches. Packaging can download pinned modules when they are absent; use an approved cache for offline builds.
 
@@ -25,7 +25,7 @@ Cross-build success does not certify target runtime behaviour. Download candidat
 
 ## First push
 
-The reviewed Windows bootstrap candidate under `prebuilt/` is an explicit first-commit exception. It is provisional until the source has a reviewed public tag. Keep its corresponding source and checksums together. Later binaries belong in Releases, not Git history.
+Binaries belong in Releases, not Git history. The repository holds no prebuilt executables.
 
 The first push to `main` or `master` triggers native CI and temporary native download artifacts. Those expire after 14 days and require GitHub sign-in. Live README badges report actual workflow/release state; before execution or publication they may show no result.
 

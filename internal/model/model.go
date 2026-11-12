@@ -9,12 +9,66 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
 const SchemaVersion = 1
-const MaxFileBytes int64 = 64 << 20
 const MaxMetadataBytes int64 = 16 << 20
+
+// A file is handled one of two ways, by size.
+//
+// Up to InlineFileBytes it is read into memory: hashed, compared, line-ending
+// converted and merged as text. Above that it is "large": streamed from disk or
+// from Git in fixed-size pieces, hashed as it goes, never held whole, never
+// line-ending converted and never text-merged (two edits to one large file are a
+// conflict, resolved by choosing a side). Memory use therefore does not grow
+// with the size of the biggest file in a repository or in build output.
+//
+// MaxFileBytes is the separate hard limit, above which Workcopy refuses a
+// tracked file instead of copying it. Both can be changed; neither is a limit on
+// what a lane may contain, only on what Workcopy will copy into one.
+const (
+	DefaultInlineFileBytes int64 = 64 << 20
+	DefaultMaxFileBytes    int64 = 2 << 30
+	// MaxFileMiBKey is the settings key and environment variable for the hard limit.
+	MaxFileMiBKey = "WORKCOPY_MAX_FILE_MIB"
+)
+
+var (
+	inlineFileBytes atomic.Int64
+	maxFileBytes    atomic.Int64
+)
+
+func init() {
+	inlineFileBytes.Store(DefaultInlineFileBytes)
+	maxFileBytes.Store(DefaultMaxFileBytes)
+	if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv(MaxFileMiBKey)), 10, 64); err == nil && value >= 64 && value <= 1<<20 {
+		maxFileBytes.Store(value << 20)
+	}
+}
+
+// InlineFileBytes is the largest file Workcopy keeps in memory.
+func InlineFileBytes() int64 { return inlineFileBytes.Load() }
+
+// MaxFileBytes is the largest tracked file Workcopy will copy into a lane.
+func MaxFileBytes() int64 { return maxFileBytes.Load() }
+
+// SetMaxFileBytes changes the hard limit and returns a function that restores it.
+func SetMaxFileBytes(value int64) func() {
+	previous := maxFileBytes.Swap(value)
+	return func() { maxFileBytes.Store(previous) }
+}
+
+// SetInlineFileBytes changes the streaming threshold and returns a function that
+// restores it. Tests lower it so that small files exercise the streaming paths.
+func SetInlineFileBytes(value int64) func() {
+	previous := inlineFileBytes.Swap(value)
+	return func() { inlineFileBytes.Store(previous) }
+}
 
 type Failure struct {
 	Exit                      int
@@ -139,6 +193,10 @@ func Version(kind FileKind, mode uint32, body []byte) FileVersion {
 	return FileVersion{Kind: kind, Mode: mode, Hash: Hash(body), Size: int64(len(body))}
 }
 func (v FileVersion) Exists() bool { return v.Kind == Regular || v.Kind == Symlink }
+
+// Large reports whether the file is handled by streaming rather than in memory.
+// Hash and Size then describe the raw bytes: no line-ending conversion applies.
+func (v FileVersion) Large() bool { return v.Kind == Regular && v.Size > InlineFileBytes() }
 func (v FileVersion) Equal(other FileVersion) bool {
 	if !v.Exists() && !other.Exists() {
 		return true

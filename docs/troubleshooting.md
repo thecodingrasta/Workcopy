@@ -85,7 +85,7 @@ The full explanation, a decision table and the measurements are on [Windows, WSL
 
 **The fix for slow lanes is where they are stored.** Keep lane storage on the WSL filesystem even when the repository stays on `/mnt/c`: set `WORKCOPY_ROOT=/home/you/.workcopy/lanes` in the [settings file](settings.md). On a repository of 1,000 files this took lane creation from 6.4 s to 0.46 s, review from 8.8 s to 0.75 s and `status` from 1.1 s to 0.05 s ([measurements and the reason](validation.md#why-mntc-is-slow-researched)). Microsoft gives the same advice: for the fastest performance, store files in the WSL file system when working from a Linux command line. `workcopy doctor` and `workcopy create` warn when lane storage is on a Windows drive.
 
-Use the Windows `workcopy.exe` for a repository checked out on Windows when Windows tools must see the lanes; give it Windows paths (`wslpath -w`). The Linux build on `/mnt/c` (drvfs/9p) works but is slow, the review worktree it registers with Linux Git is invalid for Windows Git (`git worktree list` marks it `prunable`, and `git gc` can drop its metadata), and a symlink made by `share` is unreadable from Windows. `workcopy doctor` warns about this combination. A repository on the WSL filesystem (`~/src`) with lanes beside it avoids all of it. Passing `/mnt/c/...` to the `.exe`, or `C:\...` to the Linux build, fails with a message naming the path form to use.
+Use the Windows `workcopy.exe` for a repository checked out on Windows when Windows tools must see the lanes; give it Windows paths or the `/mnt/c/...` paths WSL already has; it understands both and answers in the one you used. The Linux build on `/mnt/c` (drvfs/9p) works but is slow, the review worktree it registers with Linux Git is invalid for Windows Git (`git worktree list` marks it `prunable`, and `git gc` can drop its metadata), and a symlink made by `share` is unreadable from Windows. `workcopy doctor` warns about this combination. A repository on the WSL filesystem (`~/src`) with lanes beside it avoids all of it. A path the other build cannot reach (for example `/home/me/repo` given to the `.exe`) is refused with a message saying why; see [path forms](wsl.md#path-forms).
 
 ## Create is refused
 
@@ -104,7 +104,7 @@ Every refusal below happens before a lane directory, registration or pinned ref 
 | `unportable-source-path` (3) | A selected tracked path cannot be written safely on every supported platform: reserved Windows names (`con.txt`), `: ? * < > \| "`, a trailing dot or space, `.git` or `.workcopy` as a component | Leave it out with `--project` or a profile, or rename it in the repository. Workcopy never renames a file for you |
 | `case-collision` (3) | Two tracked paths differ only by case, so they would be one file on Windows or macOS | Rename one in the repository, or leave them out of the selection |
 | `name-collision` (3) | The volume that would hold the lane stores two tracked paths as one entry. The usual cause is the same accented name written two ways (`café` as one code point and as `e` plus a combining accent), which macOS treats as one file and Linux and Windows as two | Leave one out with `--project` or a profile, rename one in the repository, or choose a lane root on a volume that keeps them apart. The message quotes both spellings with `\u` escapes because they look identical on screen |
-| `unsupported-source-entry` (3) | A selected path is a Git submodule, a special tree entry, or a file over 64 MiB. The message says which | Leave it out with `--project` or a profile. Lanes do not materialize submodules |
+| `unsupported-source-entry` (3) | A selected path is a Git submodule, a special tree entry, or a file over the `WORKCOPY_MAX_FILE_MIB` limit (default 2 GiB; raise it in the [settings](settings.md) if the file is legitimately larger). The message says which | Leave it out with `--project` or a profile. Lanes do not materialize submodules |
 | `unsafe-source-link` (3) | A tracked symbolic link is absolute, uses a backslash, or leaves the lane | Leave it out, or make the link relative and inside the repository |
 | `symlink-unavailable` (3) | The selection tracks symbolic links and this account cannot create them in the lane root (Windows without Developer Mode or the "Create symbolic links" right, or a FAT or exFAT volume) | Enable Developer Mode, choose a lane root on NTFS, ext4 or APFS, or leave the linked paths out |
 
@@ -121,7 +121,19 @@ Workcopy asks the volume rather than guessing: before writing anything it replay
 ## A lane on a detached HEAD does not move
 
 A lane created while the checkout is on a detached HEAD (or with `--branch` set to a commit) is pinned to that commit. After you integrate its review, `sync` reports exit 4 ("snapshot has not changed") because there is no branch to follow. Create a new lane from the new commit.
+## A review on Windows lists files that were not touched ("Filename too long")
+
+Windows Git refuses paths over 260 characters unless `core.longpaths` is on, and then reports files nobody edited as modified. Workcopy runs its own Git commands with long paths enabled and names a review directory `<lane>-<8 hex digits>` to keep it short, but the Git you run yourself in the review directory follows your own configuration. When a review path reaches 260 characters and your Git lacks the setting, `merge` and `doctor` print the exact fix:
+
+```sh
+git -C <repository> config core.longpaths true
+```
+
+Workcopy does not change your Git configuration for you. A shorter `--root` also helps.
+
 ## A tool call hit its deadline
+
+When a deadline or Ctrl-C cuts off `create`, the result is `cancelled` (exit 3) and says so; it does not show a low-level file error. The lane stays in the `creating` phase until you run `recover NAME` (it resumes, including in repositories that convert line endings, and removes the temporary files Workcopy left behind) or `destroy NAME --force` to discard it.
 
 Large repositories on slow filesystems can need more than the default two minutes. Set `WORKCOPY_TOOL_TIMEOUT=10m` once in the [settings file](settings.md) (or start the server with `--tool-timeout 10m`). A call that was interrupted leaves a recoverable state: call `workcopy_recover`. Workcopy now overlaps file operations, which cut lane creation and review preparation to roughly a third of the previous time on Windows NTFS and WSL drvfs (about half on ext4) in the measurements recorded in [validation](validation.md); `WORKCOPY_IO_WORKERS=1` restores strictly sequential behaviour for diagnosis.
 

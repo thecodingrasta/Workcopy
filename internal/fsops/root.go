@@ -110,7 +110,7 @@ func (r *Root) Lstat(name string) (os.FileInfo, error) {
 	return r.backend.lstat(name)
 }
 func (r *Root) ReadFile(name string) ([]byte, error) {
-	return r.ReadFileLimit(name, model.MaxFileBytes)
+	return r.ReadFileLimit(name, model.InlineFileBytes())
 }
 func (r *Root) ReadFileLimit(name string, limit int64) ([]byte, error) {
 	info, err := r.Lstat(name)
@@ -199,7 +199,7 @@ func (r *Root) WriteAtomic(name string, body []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	temporary := path.Join(path.Dir(name), ".workcopy-tmp-"+id)
+	temporary := path.Join(path.Dir(name), TempPrefix+id)
 	file, err := r.backend.create(temporary, mode)
 	if err != nil {
 		return err
@@ -364,7 +364,7 @@ func (r *Root) ReplaceSymlink(name, target string, external bool) error {
 	if err != nil {
 		return err
 	}
-	tmp := path.Join(path.Dir(name), ".workcopy-tmp-"+id)
+	tmp := path.Join(path.Dir(name), TempPrefix+id)
 	if err = r.backend.symlink(target, tmp); err != nil {
 		return err
 	}

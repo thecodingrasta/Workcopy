@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+func TestRepositoryConfiguresDeterministicIsolation(t *testing.T) {
+	r := NewRepository(t)
+	for key, want := range map[string]string{
+		"gc.auto":                "0",
+		"gc.autoDetach":          "false",
+		"maintenance.auto":       "false",
+		"maintenance.autoDetach": "false",
+		"core.fsmonitor":         "false",
+	} {
+		got := r.Git("config", "--get", key)
+		if got != want {
+			t.Errorf("git config %s: got %q, want %q", key, got, want)
+		}
+	}
+}
+
 func TestSourceRootFromDirectory(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "internal", "testutil")

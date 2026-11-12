@@ -15,6 +15,52 @@ Conflicts and interrupted operations can temporarily retain content under `.work
 
 The lane-local output rule keeps independent builds from replacing one another's files. It does not prevent a build script from writing outside the lane; inspect custom output paths and use host permissions when those writes must be restricted.
 
+## Measuring a lane
+
+```text
+workcopy storage NAME            # also: workcopy_storage over MCP, and --json
+```
+
+The command is read-only. It walks the lane without entering any link, asks the operating system for each file's real allocation, and counts a file with several names once. It reports:
+
+| Row | Meaning |
+| --- | --- |
+| `source` | Files the lane tracks. A tracked file stays `source` even inside a directory named `bin`. |
+| `workcopy-metadata` | The lane's own state under `.workcopy`. |
+| `agent-context` | Copies of agent instruction files. |
+| `declared-output` | Untracked files matching the owner's `destroy.discard` patterns. Only an owner-supplied configuration counts; a repository-committed one is ignored. |
+| `likely-output` | Untracked files under conventional output directories (`bin`, `obj`, `node_modules`, `dist`, `build`, `out`, `target`, `artifacts`, `TestResults`, `coverage`, `.next`, `__pycache__`), or under a centralised .NET output directory that a tracked `Directory.Build.props` already declares with `UseArtifactsOutput` or an `ArtifactsPath` of the form `$(MSBuildThisFileDirectory)name`. This is a naming heuristic, not proof the content is disposable. |
+| `other-local` | Everything else the lane holds. |
+
+Each row shows allocated bytes, how much of that is `reclaimable` (every name of the file lies inside the lane, so deleting the lane frees it) and how much is `shared` (a name outside the lane also reaches it, for example a hard link into a package store, so deleting the lane frees nothing). The report also names the largest top-level directories, so a full disk can be traced to a place.
+
+What it does **not** do:
+
+- It is not a quota and does not enforce anything. Child build tools write wherever they are told to, including outside the lane.
+- Shared dependency mappings and other links are listed as "not entered". Their targets belong to every lane that links them and are never added to a lane's total.
+- Data shared by block cloning cannot be seen through the operating system's file APIs, so on a volume that clones, the allocation figure is an upper bound. The report says so.
+- Files that cannot be read are counted as `unreadable`; a nonzero count means the totals are a lower bound.
+- The figures are a point-in-time estimate. No lock is taken, so a running build changes them while they are read.
+
+`workcopy doctor` and `storage` also report the volume under the repository and lane root: filesystem, whether hard links work, whether the volume reports block sharing, and free space. Block cloning is read from the volume flag Windows documents for it (`FILE_SUPPORTS_BLOCK_REFCOUNTING`), not from the filesystem name. On Linux and macOS the answer comes from the filesystem type: `unknown` means only an attempt on the real volume could decide (for example XFS, which shares blocks only when created with reflink enabled), and is not a refusal. A reported capability is not proof that a copy of a particular file will succeed.
+
+The report also lists the per-user NuGet and Go caches (taken from `NUGET_PACKAGES`, `GOCACHE`, `GOMODCACHE`, `GOPATH`, or the documented default; `NuGet.Config` and `go env -w` settings are not read) and warns when one is on a different volume than the lanes. That matters because link-based reuse between volumes cannot work and, in the measurements below, fell back to copying without any message.
+
+## Measured behaviour
+
+These numbers come from experiments on one Windows 11 machine (NTFS, .NET SDK 10.0.402, Go 1.27.3, pnpm 12.18.0). They are evidence about what is possible, not a promise about any other machine, and they were not repeated on macOS.
+
+- **Package caches already share.** Go's build and module caches and NuGet's global packages are per user, so lanes run by the same user reuse them without any Workcopy link. A separate Go build cache per lane roughly doubled cache size in a two-lane build (140.2 MiB against 74.7 MiB shared), and both modes produced the same binary for the same lane.
+- **Output is small in the .NET project measured and large in `node_modules`.** A clean build of two small .NET projects added about 1.5 MiB per lane; two independent copies of an npm `node_modules` tree (32,525 files, 584.5 MiB logical) allocated 1,265.3 MiB.
+- **A shared pnpm store helps when packages are plain files.** With the store on the same volume as the lanes, two lanes of that project allocated 615.8 MiB in total against 1,265.3 MiB for two `npm ci` installs, and the second install took 9 s against 34 s. On a second, native-module-heavy project the saving was only 4% (1,157.5 MiB against 1,209.2 MiB), because about 11,000 files in packages that declare install scripts were copied, not linked, even with scripts disabled.
+- **Linking is not isolation.** An in-place write to a hard-linked file changed the same file in every lane and in the store. `csc` and MSBuild's `Copy` task replaced files instead of writing into them, so a rebuilt lane broke its link and left the other lane untouched. A read-only attribute made the build fail with `MSB3491` instead of corrupting anything, but the attribute applies to every link.
+- **MSBuild copy-local hard links** (`CreateHardLinksForCopyLocalIfPossible`) linked 88 of 99 output files, 86 of them into the global NuGet cache, so an in-place write would reach every project that uses the package. With the lane and the NuGet cache on different volumes only 2 of 99 files were linked, while the build log still printed 88 "Creating hard link" lines. The log does not prove sharing; only the file identity does.
+- **Identical source does not give identical output by default.** The same project built in two lane directories produced different DLLs and PDBs. With an explicit `PathMap` for the lane root and `ContinuousIntegrationBuild=true`, the `bin` output became byte-identical, but intermediates such as `assets.cache` and `FileListAbsolute.txt` still differed because they embed absolute paths. A shared build-output store would therefore need identical path maps in every lane, and `PathMap` changes the source paths recorded in debug symbols.
+
+## What Workcopy will not do to your build
+
+Workcopy never edits `Directory.Build.props`, `.npmrc`, `pnpm-workspace.yaml` or any other build file, never passes properties to a build tool, and never creates hard links or clones inside a lane on its own. The measurements above show each of those changes what is built or widens what a stray write can reach. Where a repository already opts in to a layout (a centralised .NET output directory), `storage` reads it and classifies output accordingly. Anything that would change build behaviour must be an explicit, recorded, per-lane choice made by the owner, and none exists today.
+
 ## Prefer native package stores
 
 A package manager often keeps downloads outside the lane, so lanes running as the same user may already reuse one cache without a Workcopy link. Workcopy does not configure package managers, run restores or assume that an installed dependency tree is immutable.

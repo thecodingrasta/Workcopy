@@ -61,7 +61,11 @@ Restart the host and confirm `workcopy_bootstrap` is available. The root must be
 - Bootstrap the current directory and retain the returned `scope.repo` and `scope.root` in worker handoffs and subsequent calls.
 - Override tool `root` only when choosing a different exact lane root. Keep different repositories in different roots.
 
-Each repository operation accepts an absolute `repo` path. Without startup `--repo`, Workcopy chooses a checkout-specific child of `--root` using its name, canonical path and Git identity. Without either startup default, it uses a private sibling of the checkout. An explicit tool `root` is an exact lane root, not a parent. Lane names are unique within a root.
+Each repository operation accepts an absolute `repo` path. Without startup `--repo`, Workcopy chooses a checkout-specific child of `--root` using its name, canonical path and Git identity. Without either startup default, it uses a private sibling of the checkout. An explicit tool `root` is an exact lane root, not a parent. Lane names are unique within a root. A repository's own settings file sets its lane root even when the server was started with `--root`: without startup `--repo`, that flag is only the parent for repositories that have no such file.
+
+**Several projects at once.** Each repository has its own lanes, even when the same lane name is used in several. Lane names must be unique within a root, so repositories that share one root need distinct names; with a parent `--root` (no startup `--repo`) every repository gets its own child directory and the question does not arise. A repository's own [settings file](settings.md#one-file-per-repository) (`<repo>/.git/workcopy.env`) can give it a lane root and an owner configuration, which then apply to every call scoped to that repository, so the CLI and the agent find the same lanes. A call's explicit `root` still wins. `workcopy_list` shows only the calling repository's lanes when a root is shared.
+
+**Paths.** `repo`, `root`, `directory` and `target` accept either platform's spelling, `C:\work\repo` or `/mnt/c/work/repo`, and the result, including the returned `scope`, is written in the spelling the call used, so the scope can be passed back unchanged. See [path forms](wsl.md#path-forms).
 
 Existing `--repo REPOSITORY --root ROOT` configurations remain valid: omitted tool scope uses that repository and exact root. Explicit scope never changes another call's defaults. Another repository with no tool root uses a sibling of the configured exact root. Optional startup `--config OWNER-CONFIG-FILE` requires `--repo` and applies only to that default repository. Other repositories use their own committed configuration. The owner file is pinned at startup, with a 1 MiB limit; tools cannot override its path. Reconnect to use changes. It does not overwrite consumer configuration or instructions. 
 
@@ -107,6 +111,7 @@ Results contain `schemaVersion:1`, `exitCode`, and `scope`, `report`, `context`,
 | `workcopy_lane_context` | Verified lane and validation context |
 | `workcopy_expand` | Add projects/paths without replacing edits |
 | `workcopy_status` | Changes, generation and conflict tokens |
+| `workcopy_storage` | Read-only disk cost of one lane by file identity (hard links counted once), split into source, likely build output and shared bytes, plus volume capabilities. A point-in-time estimate, not a quota; see [measuring a lane](storage.md#measuring-a-lane) |
 | `workcopy_sync` | Three-way reconciliation |
 | `workcopy_content` | Explicit bounded conflict bytes |
 | `workcopy_resolve` | Resolve one current conflict |

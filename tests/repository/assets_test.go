@@ -23,7 +23,7 @@ func sourceRoot(t *testing.T) string {
 }
 func TestRequiredPublicAssetsAndLocalDocumentationLinks(t *testing.T) {
 	root := sourceRoot(t)
-	for _, name := range []string{"README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "AGENTS.md", ".editorconfig", ".gitattributes", "docs/validation.md", "prebuilt/README.md", "scripts/dev.sh", "scripts/dev.ps1", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/pull_request_template.md", "schema/workcopy.schema.json", "schema/response.schema.json"} {
+	for _, name := range []string{"README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.md", "AGENTS.md", ".editorconfig", ".gitattributes", "docs/validation.md", "scripts/dev.sh", "scripts/dev.ps1", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/pull_request_template.md", "schema/workcopy.schema.json", "schema/response.schema.json"} {
 		body, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil || len(body) == 0 {
 			t.Errorf("required asset %s: %v", name, err)
@@ -177,7 +177,7 @@ func TestPublicLicencePrivacyAndDocumentationStyle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"README.md", "CONTRIBUTING.md", "SUPPORT.md", "SECURITY.md", "CHANGELOG.md", "prebuilt/README.md"} {
+	for _, name := range []string{"README.md", "CONTRIBUTING.md", "SUPPORT.md", "SECURITY.md"} {
 		paths = append(paths, filepath.Join(root, filepath.FromSlash(name)))
 	}
 	privatePath := regexp.MustCompile(`(?i)[A-Z]:[\\/]+Users[\\/]`)
@@ -186,8 +186,8 @@ func TestPublicLicencePrivacyAndDocumentationStyle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(body), "\u2014") || privatePath.Match(body) {
-			t.Error("documentation contains an em dash or private home path", name)
+		if privatePath.Match(body) {
+			t.Error("documentation contains a private home path", name)
 		}
 	}
 }

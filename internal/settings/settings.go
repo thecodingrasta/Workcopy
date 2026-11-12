@@ -33,6 +33,9 @@ const (
 	AllowShareTarget = "WORKCOPY_ALLOW_SHARE_TARGET"
 	Git              = "WORKCOPY_GIT"
 	IOWorkers        = "WORKCOPY_IO_WORKERS"
+	MaxFileMiB       = model.MaxFileMiBKey
+	PathStyle        = "WORKCOPY_PATH_STYLE"
+	WSLMountRoot     = fsops.WSLMountRootEnvironment
 	JSON             = "WORKCOPY_JSON"
 
 	Agents                 = "WORKCOPY_AGENTS"
@@ -80,6 +83,9 @@ var Definitions = []Definition{
 	{Key: AllowShareTarget, Flag: "allow-share-target", kind: list, Description: "MCP: directories an agent may link with share; separate several with ;"},
 	{Key: Git, kind: path, Description: "Git program to use instead of the first git on PATH"},
 	{Key: IOWorkers, kind: number, min: 1, max: 64, Description: "Concurrent file operations for bulk work; 1 is strictly sequential"},
+	{Key: MaxFileMiB, kind: number, Default: "2048", min: 64, max: 1 << 20, Description: "Largest tracked file Workcopy will copy into a lane, in MiB. Files over 64 MiB are streamed, treated as binary and never merged as text, so size costs time, not memory"},
+	{Key: PathStyle, Flag: "path-style", kind: text, Default: "auto", Description: "How lane and repository paths are written in answers: auto (the form you passed, so /mnt/c/... in gives /mnt/c/... out), native, wsl (/mnt/c/...) or windows (C:\\...). Workcopy accepts both forms as input either way"},
+	{Key: WSLMountRoot, kind: text, Description: "Windows build only: the directory where WSL mounts Windows drives, when /etc/wsl.conf moved it from /mnt (use / for drives at /c, /d). Used to read and to write /mnt/c-style paths"},
 	{Key: JSON, Flag: "json", kind: boolean, Default: "off", Description: "CLI: print JSON by default"},
 
 	{Key: Agents, Flag: "agent", kind: list, Default: "auto", Description: "Which agent tools a lane serves: auto (the MCP client decides, everything when unknown), all, or tool keys such as kiro;codex;claude;gemini;opencode;cursor. Tool-neutral files (AGENTS.md) are always copied"},
@@ -120,6 +126,8 @@ type Resolved struct {
 	File string
 	// Candidate is where a settings file would be looked for or created.
 	Candidate string
+	// ProjectFile is the per-repository settings file that was applied, or "".
+	ProjectFile string
 }
 
 // Inputs are the sources, injectable so every precedence rule can be tested
@@ -188,8 +196,13 @@ func Load(in Inputs) (*Resolved, error) {
 	}
 	var fileValues map[string][]string
 	if file != "" {
-		if err := fsops.CheckNativePath(file); err != nil {
+		native, err := fsops.NormalizeInput(nil, file)
+		if err != nil {
 			return nil, err
+		}
+		file = native
+		if r.Candidate != "" {
+			r.Candidate = native
 		}
 		body, err := in.ReadFile(file)
 		switch {
@@ -227,9 +240,28 @@ func Load(in Inputs) (*Resolved, error) {
 		if err := validate(d, entry.Values); err != nil {
 			return nil, err
 		}
+		entry.Values = nativePaths(d, entry.Values)
 		r.entries[d.Key] = entry
 	}
 	return r, nil
+}
+
+// nativePaths rewrites the other platform's spelling of a path setting into this
+// platform's, so every consumer sees one form. The spelling the user chose is
+// remembered for the answers.
+func nativePaths(d Definition, values []string) []string {
+	if d.kind != path && d.Key != AllowShareTarget {
+		return values
+	}
+	converted := make([]string, len(values))
+	for i, value := range values {
+		native, err := fsops.NormalizeInput(nil, value)
+		if err != nil {
+			native = value
+		}
+		converted[i] = native
+	}
+	return converted
 }
 
 // splitList separates list values at semicolons. Tool names also split at
@@ -282,14 +314,20 @@ func validate(d Definition, values []string) error {
 			if err != nil || int64(n) < d.min || int64(n) > d.max {
 				return invalid(d.Key, fmt.Sprintf("%q must be a duration such as 90s, 15m or 2h between %v and %v", value, time.Duration(d.min), time.Duration(d.max)))
 			}
+		case text:
+			if d.Key == PathStyle {
+				if _, _, err := fsops.ParsePathStyle(value); err != nil {
+					return invalid(d.Key, err.Error())
+				}
+			}
 		case path:
-			if err := fsops.CheckNativePath(value); err != nil {
+			if _, _, err := fsops.ToNative(value); err != nil {
 				return named(d.Key, err)
 			}
 		case list:
 			switch d.Key {
 			case AllowShareTarget:
-				if err := fsops.CheckNativePath(value); err != nil {
+				if _, _, err := fsops.ToNative(value); err != nil {
 					return named(d.Key, err)
 				}
 			case Agents:
@@ -470,7 +508,11 @@ func (r *Resolved) Overridden(key string) bool { return r.entries[key].Source !=
 // the environment (the Git program, the I/O worker count) visible to them when
 // they were set in the file or a flag.
 func (r *Resolved) ExportProcessEnvironment(environ func(string) (string, bool), set func(string, string) error) error {
-	for _, key := range []string{Git, IOWorkers} {
+	// The file-size limit lives in the model package, which cannot read settings.
+	if mib := int64(r.Int(MaxFileMiB)); mib >= 64 {
+		model.SetMaxFileBytes(mib << 20)
+	}
+	for _, key := range []string{Git, IOWorkers, WSLMountRoot} {
 		if _, already := environ(key); already {
 			continue
 		}
@@ -511,4 +553,91 @@ func Builtin() *Resolved {
 		panic("built-in settings are invalid: " + err.Error())
 	}
 	return r
+}
+
+// ProjectFileName is the per-repository settings file, kept in the repository's
+// Git directory. Git never tracks that directory, so the file cannot be committed
+// or shipped by a clone, and it is not part of any lane.
+const ProjectFileName = "workcopy.env"
+
+// ProjectPath is where a repository's settings file lives.
+func ProjectPath(commonGitDir string) string { return filepath.Join(commonGitDir, ProjectFileName) }
+
+// projectKeys are the settings that make sense per repository and are safe to
+// take from a file inside the repository's Git directory. The Git program, the
+// share-target allow-list and the MCP limits stay with the user's own settings
+// file: a program to run and a directory to link are not a project's to choose.
+var projectKeys = map[string]bool{
+	Root: true, Config: true, MaxFileMiB: true, IOWorkers: true, Agents: true,
+	AgentContext: true, AgentContextDetect: true, AgentContextInclude: true, AgentContextExclude: true,
+	AgentContextConfig: true, AgentContextSecrets: true, AgentContextMaxFileKiB: true,
+	AgentContextMaxKiB: true, AgentContextMaxFiles: true, AgentContextOnSync: true,
+}
+
+// ProjectKey reports whether a setting may be set per repository.
+func ProjectKey(key string) bool { return projectKeys[key] }
+
+// WithProject layers a repository's settings file between the user's file and the
+// environment: flag > environment > project file > user file > default. A key the
+// project file sets replaces the lower layers' value for that key. The receiver
+// is not modified.
+func (r *Resolved) WithProject(file string, body []byte) (*Resolved, error) {
+	values, err := ParseEnvFile(body)
+	if err != nil {
+		return nil, model.Fail(2, "invalid-settings-file", fmt.Sprintf("%s: %v", file, err))
+	}
+	merged := &Resolved{entries: make(map[string]Entry, len(r.entries)), File: r.File, Candidate: r.Candidate, ProjectFile: file}
+	for key, entry := range r.entries {
+		merged.entries[key] = entry
+	}
+	for _, d := range Definitions {
+		given, ok := values[d.Key]
+		if !ok {
+			continue
+		}
+		if !projectKeys[d.Key] {
+			return nil, model.Fail(2, "invalid-settings-file", fmt.Sprintf("%s: %s cannot be set per repository; put it in the user settings file (`workcopy settings` shows where)", file, d.Key))
+		}
+		if d.kind == list {
+			given = splitList(given, d.Key == Agents)
+		}
+		if err = validate(d, given); err != nil {
+			return nil, model.Fail(2, "invalid-settings-file", fmt.Sprintf("%s: %v", file, err))
+		}
+		given = nativePaths(d, given)
+		if d.kind == path {
+			for _, value := range given {
+				if value != "" && !filepath.IsAbs(value) {
+					return nil, model.Fail(2, "invalid-settings-file", fmt.Sprintf("%s: %s must be an absolute path, not %q", file, d.Key, value))
+				}
+			}
+		}
+		current := merged.entries[d.Key]
+		if current.Source == "flag" || current.Source == "environment" {
+			continue
+		}
+		current.Values, current.Source, current.Origin = given, "project", file
+		merged.entries[d.Key] = current
+	}
+	return merged, nil
+}
+
+// ProjectTemplate is the commented starting file written by
+// `workcopy settings --init --project`.
+func ProjectTemplate() string {
+	var out strings.Builder
+	out.WriteString("# Workcopy settings for this repository only. KEY=VALUE per line.\n")
+	out.WriteString("# Precedence: flag > environment > this file > your user settings file > default.\n")
+	out.WriteString("# This file lives in the repository's Git directory, so Git never tracks it.\n\n")
+	for _, d := range Definitions {
+		if !projectKeys[d.Key] {
+			continue
+		}
+		fmt.Fprintf(&out, "# %s", d.Description)
+		if d.Default != "" {
+			fmt.Fprintf(&out, " (default: %s)", d.Default)
+		}
+		fmt.Fprintf(&out, "\n# %s=\n\n", d.Key)
+	}
+	return out.String()
 }

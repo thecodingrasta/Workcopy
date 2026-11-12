@@ -21,7 +21,9 @@ import (
 func run(t *testing.T, directory string, environment []string, arguments ...string) (string, string, int) {
 	t.Helper()
 	recordCommand(arguments...)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Generous: a large repository on a 9p mount (WSL drvfs) takes over a minute per
+	// command when the machine is busy. This only bounds a hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Dir = directory
@@ -137,10 +139,12 @@ func TestOwnerReportedIssuesThroughTheRealBinary(t *testing.T) {
 		t.Fatalf("WC-013: --include-files must list the files: %d %s", code, out)
 	}
 
-	// WC-012: a path for the other operating system gets an actionable error.
-	foreign, expected := "/mnt/c/Users/me/repo", "posix-path-on-windows"
+	// WC-012: a path that cannot exist on this platform gets an actionable error.
+	// (WC-022: the other platform's spelling of one that can exist is accepted;
+	// see wsl_paths_test.go.)
+	foreign, expected := "/home/me/repo", "wsl-path-unreachable"
 	if runtime.GOOS != "windows" {
-		foreign, expected = `C:\Users\me\repo`, "windows-path-on-posix"
+		foreign, expected = `\\server\share\repo`, "windows-path-on-posix"
 	}
 	out, _, code = run(t, lane, nil, "status", "--repo", foreign, "--json")
 	if code != 2 || errorCode(t, out) != expected {

@@ -14,7 +14,7 @@ Security corrections target the current development branch and latest stable tag
 
 Workcopy runs with your user account's permissions. It is not an agent sandbox. A process that can write both the workspace registry and lane metadata can impersonate ownership. Store the workspace root privately and keep untrusted processes outside that boundary.
 
-Current source builds require Go 1.25 or newer and use `os.Root`. Retained historical compatibility code uses cooperative path checks and does not resist hostile concurrent filesystem replacement; the current module does not support older toolchains. Use a supported patched Go toolchain for distributed binaries. Filesystem checks do not isolate unrestricted host access or protect writable shared dependencies from their consumers.
+Source builds require Go 1.27.4 or newer and use `os.Root`. There is no fallback backend for older toolchains. Use a supported patched Go toolchain for distributed binaries. Filesystem checks do not isolate unrestricted host access or protect writable shared dependencies from their consumers.
 
 Only local filesystems are supported. Network filesystem locking, cloud synchronisation, mount substitution, ACL enforcement and hostile kernel/filesystem behaviour are outside the tested contract. Normal process interruption is journalled; file synchronisation is not a claim of whole-operation atomicity or power-loss durability on every filesystem.
 

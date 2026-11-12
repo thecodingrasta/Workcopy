@@ -28,7 +28,7 @@ func TestSelectedDotNetProjectBuildsAndTestsInsideLane(t *testing.T) {
 	repository.Write("global.json", `{"sdk":{"version":"8.0.100","rollForward":"latestMajor","allowPrerelease":false}}`)
 	repository.Write("Directory.Build.props", `<Project>
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).workcopy-build/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
@@ -114,7 +114,7 @@ public class CalculatorTests { [Fact] public void AddCombinesValues() => Assert.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(lane, ".workcopy-build", "bin", "Api.Tests", "Debug", "net8.0", "Api.Tests.dll")); err != nil {
+	if _, err := os.Stat(filepath.Join(lane, ".workcopy-build", "bin", "Api.Tests", "Debug", "net11.0", "Api.Tests.dll")); err != nil {
 		t.Fatalf("test output is not lane-local: %v", err)
 	}
 }

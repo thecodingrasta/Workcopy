@@ -44,8 +44,8 @@ func (e *Engine) mergeText(ctx context.Context, base, local, upstream []byte) ([
 		}
 		return nil, false, fmt.Errorf("git merge-file: %w: %s", err, diagnostics.String())
 	}
-	if int64(output.Len()) > model.MaxFileBytes {
-		return nil, false, fmt.Errorf("merged file exceeds 64 MiB")
+	if int64(output.Len()) > model.InlineFileBytes() {
+		return nil, false, fmt.Errorf("merged file exceeds the %d MiB in-memory limit", model.InlineFileBytes()>>20)
 	}
 	return output.Bytes(), true, nil
 }
@@ -119,7 +119,7 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 		names = append(names, filename)
 	}
 	sort.Strings(names)
-	report.Plan = &Plan{Action: "sync", Files: names, Effects: []string{"Reconcile the pinned upstream snapshot against each accepted baseline", "Preserve local contributions and record unresolved conflicts"}}
+	report.Plan = &Plan{Action: "sync", Files: names, FileCount: len(names), Effects: []string{"Reconcile the pinned upstream snapshot against each accepted baseline", "Preserve local contributions and record unresolved conflicts"}}
 	if dryRun {
 		report.Message = "Sync candidates inspected without writes. Text-merge outcomes are evaluated during apply."
 		return report, nil
@@ -147,11 +147,7 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 			if base.ObjectID == entry.ObjectID && base.Exists() {
 				up = base
 			} else {
-				upBody, readErr = reader.Read(entry.ObjectID)
-				if readErr != nil {
-					return report, readErr
-				}
-				up, readErr = entryVersion(entry, upBody, plan.rule(filename))
+				up, upBody, readErr = entryVersionFrom(reader, entry, plan.rule(filename))
 				if readErr != nil {
 					return report, readErr
 				}
@@ -181,6 +177,12 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 			if up.Eol == eol.Raw {
 				up.Eol = local.Eol
 			}
+		case base.Large() || local.Large() || up.Large():
+			// A file too large to hold is never text-merged. If only one side
+			// changed it was handled above; two different edits are a conflict
+			// the owner settles by choosing a side.
+			conflict = true
+			reason = "both sides changed a file too large to merge as text"
 		case base.Kind == model.Regular && local.Kind == model.Regular && up.Kind == model.Regular:
 			baseBody, baseErr := reader.Read(base.ObjectID)
 			if baseErr != nil {
@@ -217,7 +219,7 @@ func (e *Engine) Sync(ctx context.Context, name string, dryRun bool) (Report, er
 			if idErr != nil {
 				return report, idErr
 			}
-			if local.Exists() {
+			if local.Exists() && !local.Large() {
 				if _, err = opened.store.PutBlob(localBody); err != nil {
 					return report, err
 				}

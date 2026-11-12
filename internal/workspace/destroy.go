@@ -102,15 +102,21 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 			record.DeleteFiles[relative] = version
 			return nil
 		}
-		if !metadata && !mapping && !known && opened.discardable(relative) {
-			// Build output the owner declared disposable. The content is still
-			// recorded so deletion can tell if it changes while quarantined.
-			version, _, readErr := state.ReadVersion(opened.root, relative, model.FileVersion{}, false)
-			if readErr != nil {
-				return readErr
+		if !metadata && !mapping && !known && (opened.discardable(relative) || fsops.IsTempArtifact(relative)) {
+			// Build output the owner declared disposable, or an atomic-write
+			// leftover. It is going to be deleted, so its content is not read: that
+			// is what made a 80 MB build artifact stop destroy. Only its kind is
+			// recorded, enough to refuse a surprise (a directory appearing where a
+			// file was) while the lane sits in quarantine.
+			kind := model.Regular
+			if entry.Type()&os.ModeSymlink != 0 {
+				kind = model.Symlink
 			}
-			record.DeleteFiles[relative] = version
-			discarded = append(discarded, relative)
+			record.DeleteFiles[relative] = model.FileVersion{Kind: kind}
+			record.DeleteVolatile = append(record.DeleteVolatile, relative)
+			if !fsops.IsTempArtifact(relative) {
+				discarded = append(discarded, relative)
+			}
 			return nil
 		}
 		if !metadata && !mapping && !known {
@@ -301,6 +307,10 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 	for _, name := range record.DeleteDirs {
 		dirs[name] = true
 	}
+	volatile := make(map[string]bool, len(record.DeleteVolatile))
+	for _, name := range record.DeleteVolatile {
+		volatile[name] = true
+	}
 	// Reject files created after quarantine. A failed deletion must not quietly
 	// widen the original discard authorization on a later recovery attempt.
 	err = root.Walk(func(name string, entry fs.DirEntry, walkErr error) error {
@@ -320,7 +330,7 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 		if !ok {
 			return model.Fail(3, "quarantine-changed", "New file in quarantine: "+name)
 		}
-		if !record.Force {
+		if !record.Force && !volatile[name] {
 			current, _, readErr := state.ReadVersion(root, name, before, false)
 			if readErr != nil {
 				return readErr
@@ -357,7 +367,7 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 			root.Close()
 			return err
 		}
-		if !record.Force {
+		if !record.Force && !volatile[name] {
 			current, _, readErr := state.ReadVersion(root, name, record.DeleteFiles[name], false)
 			if readErr != nil {
 				root.Close()

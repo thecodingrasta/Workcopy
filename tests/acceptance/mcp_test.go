@@ -50,7 +50,7 @@ func TestMCPMultipleRepositoriesAndDirectoryOnboarding(t *testing.T) {
 	var workers sync.WaitGroup
 	for i := 0; i < 3; i++ {
 		r := testutil.NewRepository(t)
-		r.Write("go.mod", "module fixture\n\ngo 1.25.0\n")
+		r.Write("go.mod", "module fixture\n\ngo 1.27.4\n")
 		r.Write("value.go", "package fixture\nfunc Value() int { return 1 }\n")
 		r.Write("value_test.go", "package fixture\nimport \"testing\"\nfunc TestValue(t *testing.T) { if Value() != 2 { t.Fatal(Value()) } }\n")
 		r.Commit("offline repository")

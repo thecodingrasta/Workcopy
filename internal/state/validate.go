@@ -31,7 +31,7 @@ func validateVersion(version model.FileVersion) error {
 	default:
 		return fmt.Errorf("unsupported file kind %q", version.Kind)
 	}
-	if !digest.MatchString(version.Hash) || version.Size < 0 || version.Size > model.MaxFileBytes {
+	if !digest.MatchString(version.Hash) || version.Size < 0 || version.Size > model.MaxFileBytes() {
 		return fmt.Errorf("invalid file size or content hash")
 	}
 	if version.ObjectID != "" && !validHex(version.ObjectID, 40) && !validHex(version.ObjectID, 64) {

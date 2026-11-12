@@ -17,3 +17,8 @@
 /.vscode/
 .DS_Store
 Thumbs.db
+
+# TestDesk generated test state: https://github.com/thecodingrasta/testdesk
+.testdesk/
+testdesk.json
+CHANGELOG.md

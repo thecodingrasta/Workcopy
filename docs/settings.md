@@ -19,7 +19,7 @@ No per-user file is normal on a first run. A file you name explicitly that does 
 
 ## Precedence
 
-A command-line flag beats an environment variable, which beats the file, which beats the built-in default. Every setting can be given in any of the three places using the same `WORKCOPY_` name. `workcopy settings` shows the winner for each key and its source.
+A command-line flag beats an environment variable, which beats the repository's own file (below), which beats your user file, which beats the built-in default. Every setting can be given in any of the three places using the same `WORKCOPY_` name. `workcopy settings` shows the winner for each key and its source.
 
 ## File format
 
@@ -38,6 +38,9 @@ A command-line flag beats an environment variable, which beats the file, which b
 | `WORKCOPY_ALLOW_SHARE_TARGET` | none | MCP: directories an agent may link with `share` |
 | `WORKCOPY_GIT` | first `git` on `PATH` | Git program to run; a value that does not resolve fails rather than falling back |
 | `WORKCOPY_IO_WORKERS` | 2× CPUs, 4 to 16 | Concurrent file operations; `1` is strictly sequential |
+| `WORKCOPY_MAX_FILE_MIB` | 2048 | Largest tracked file Workcopy copies into a lane, in MiB (64 to 1,048,576). Files over 64 MiB are streamed and compared by hash, never held in memory, never converted for line endings and never text-merged: if both sides changed one, `sync` reports a conflict. A file over the limit is refused with its path and size |
+| `WORKCOPY_PATH_STYLE` | auto | How paths are written in answers: `auto` (the spelling you passed), `native`, `wsl` or `windows`. Flag: `--path-style`. See [paths](wsl.md#path-forms) |
+| `WORKCOPY_WSL_MOUNT_ROOT` | `/mnt` | Windows build only: the directory where WSL mounts Windows drives when `/etc/wsl.conf` moved it (`/` for drives at `/c`, `/d`). It decides which paths the build reads as drive paths and how it writes them |
 | `WORKCOPY_JSON` | off | CLI: print JSON by default |
 | `WORKCOPY_AGENTS` | auto | Which agent tools a lane serves: `auto` (the calling MCP client decides; everything when unknown), `all`, or keys such as `kiro,codex,claude,gemini,opencode` ([details](agent-context.md#which-agent-a-lane-serves)). Flag: `--agent` |
 | `WORKCOPY_AGENT_CONTEXT` | on | Copy agent instruction files into lanes ([details](agent-context.md)) |
@@ -52,6 +55,25 @@ A command-line flag beats an environment variable, which beats the file, which b
 | `WORKCOPY_AGENT_CONTEXT_REFRESH_ON_SYNC` | on | Refresh unmodified copies whenever a lane syncs |
 
 Flags map to keys where one exists: `--root`, `--repo`, `--config`, `--max-lanes`, `--reserve-mib`, `--tool-timeout`, `--allow-share-target`, `--agent`, `--json`. `WORKCOPY_AGENTS` also accepts commas, which survive an unquoted shell command line where `;` does not.
+
+## One file per repository
+
+Lane location and owner configuration belong to a project, not to a user. Each repository can have its own settings file in its Git directory:
+
+```sh
+cd path/to/repo
+workcopy settings --init --project-file     # writes <repo>/.git/workcopy.env, never overwrites
+```
+
+```ini
+# <repo>/.git/workcopy.env
+WORKCOPY_ROOT=D:\lanes\olp
+WORKCOPY_CONFIG=D:\olp\owner.workcopy.json
+```
+
+With that file, `workcopy create`, `list`, `path` and every other command run from the checkout, from a lane or by `--repo` pick up the repository's root and owner configuration with no wrapper script and no flags, and so does the MCP server for calls scoped to that repository. Another repository is unaffected. `workcopy settings` shows `project` as the source of each value it supplies.
+
+Precedence for these keys: flag, environment variable, the repository file, your user file, default. The MCP server started without `--repo` treats `--root` as the parent directory for each repository, so it does not override a repository's own `WORKCOPY_ROOT`. The repository file may set only `WORKCOPY_ROOT`, `WORKCOPY_CONFIG`, `WORKCOPY_MAX_FILE_MIB`, `WORKCOPY_IO_WORKERS`, `WORKCOPY_AGENTS` and the `WORKCOPY_AGENT_CONTEXT_*` keys, and its paths must be absolute. Anything else (the Git program, share targets, MCP limits) is refused with `invalid-settings-file`, because a program to run or a directory to link is the user's decision. Git does not track its own directory, so the file cannot be committed or arrive with a clone, and it is not copied into lanes.
 
 ## MCP hosts
 

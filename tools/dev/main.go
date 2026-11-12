@@ -93,7 +93,7 @@ func run(ctx context.Context, arguments []string) error {
 			return fmt.Errorf("package requires VERSION [--native], such as v0.1.0-rc.1")
 		}
 		if !modernGo(runtime.Version()) {
-			return fmt.Errorf("release packaging requires Go 1.25 or newer; use a currently supported patched release")
+			return fmt.Errorf("release packaging requires Go 1.27 or newer; use the pinned patched release")
 		}
 		return release(ctx, root, arguments[1], len(arguments) == 3)
 	default:
@@ -180,7 +180,7 @@ func modernGo(version string) bool {
 	}
 	major, _ := strconv.Atoi(parts[1])
 	minor, _ := strconv.Atoi(parts[2])
-	return major > 1 || major == 1 && minor >= 25
+	return major > 1 || major == 1 && minor >= 27
 }
 func binaryName(goos string) string {
 	if goos == "windows" {

@@ -3,7 +3,10 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +33,43 @@ func (e *Engine) requireGitIdentity(ctx context.Context, directory string) error
 		}
 	}
 	return nil
+}
+
+// hashLargeReviewFile stores one large review file in Git by streaming it to
+// git hash-object. The bytes Git receives are hashed on the way and compared
+// with the receipt, so a file edited after approval is refused rather than
+// committed, and nothing larger than one buffer is ever held in memory.
+func (e *Engine) hashLargeReviewFile(ctx context.Context, root *fsops.Root, directory, name string, version model.FileVersion) (string, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return "", err
+	}
+	file, err := root.OpenRegular(name, info)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hasher := sha256.New()
+	counted := &countingReader{reader: io.TeeReader(file, hasher)}
+	out, err := e.Repository.RunReader(ctx, directory, counted, "hash-object", "-w", "--no-filters", "--stdin")
+	if err != nil {
+		return "", err
+	}
+	if counted.n != version.Size || hex.EncodeToString(hasher.Sum(nil)) != version.Hash {
+		return "", model.Fail(3, "review-changed", "Review changed while committing: "+name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+type countingReader struct {
+	reader io.Reader
+	n      int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.reader.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func (e *Engine) commitReview(ctx context.Context, name string, options MergeOptions, dryRun bool) (Report, error) {
@@ -103,6 +143,13 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	for _, filename := range names {
 		version := receipt.Files[filename]
 		oid := version.ObjectID
+		if oid == "" && version.Large() {
+			stored, hashErr := e.hashLargeReviewFile(ctx, root, receipt.Path, filename, version)
+			if hashErr != nil {
+				return report, hashErr
+			}
+			oid = stored
+		}
 		if oid == "" {
 			actual, body, readErr := state.ReadVersion(root, filename, version, opened.snapshot.Manifest.RespectExecutableBits)
 			if readErr != nil {

@@ -192,7 +192,8 @@ func TestToolSurfaceHasNoBypassAndRejectsUnknownArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Tools) != 19 {
+	// 19 tools plus the read-only workcopy_storage report.
+	if len(list.Tools) != 20 {
 		t.Fatalf("tools: %d", len(list.Tools))
 	}
 	for _, tool := range list.Tools {

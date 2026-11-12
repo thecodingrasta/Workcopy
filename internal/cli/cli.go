@@ -59,6 +59,7 @@ func Run(ctx context.Context, input []string, stdout, stderr io.Writer) int {
 		}
 		return writeResult(stdout, stderr, jsonMode, workspace.Report{Command: "version", Message: "Workcopy " + Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ", " + runtime.Version() + ")"}, nil)
 	}
+	ctx, _ = fsops.WithRecorder(ctx)
 	resolved, loadErr := loadSettings(parsed)
 	if loadErr != nil {
 		return writeResult(stdout, stderr, jsonMode, workspace.Report{Command: parsed.command}, loadErr)
@@ -68,6 +69,14 @@ func Run(ctx context.Context, input []string, stdout, stderr io.Writer) int {
 	}
 	report, operationErr := execute(ctx, parsed, resolved)
 	report.Command = parsed.command
+	if report.Plan.Inventory() && !parsed.boolean("include-files") {
+		// A plan lists every file it will write: 4,160 of them is a quarter of a
+		// megabyte of JSON. Say how many and leave the names out unless asked, so
+		// a caller with an output limit is not flooded or truncated.
+		summary := *report.Plan
+		summary.Files, summary.FilesOmitted = []string{}, true
+		report.Plan = &summary
+	}
 	if report.Review != nil && !parsed.boolean("include-files") {
 		// The per-file inventory of a review can run to megabytes. Leave it out
 		// unless asked, as the MCP server always does, so an agent reading this
@@ -76,7 +85,23 @@ func Run(ctx context.Context, input []string, stdout, stderr io.Writer) int {
 		summary.Files = map[string]model.FileVersion{}
 		report.Review = &summary
 	}
+	report, operationErr = renderPaths(ctx, resolved, report, operationErr)
 	return writeResult(stdout, stderr, jsonMode, report, operationErr)
+}
+
+// renderPaths writes the paths in a result in the form the caller used, so an
+// agent that passed /mnt/c/... is told /mnt/c/... and not C:\... It never changes
+// file content, which is the caller's data and not Workcopy's to edit.
+func renderPaths(ctx context.Context, resolved *settings.Resolved, report workspace.Report, err error) (workspace.Report, error) {
+	form := fsops.StyleFor(ctx, resolved.String(settings.PathStyle))
+	if form == fsops.FormNative {
+		return report, err
+	}
+	content := report.Content
+	report.Content = nil
+	report = fsops.RenderCopy(report, form)
+	report.Content = content
+	return report, fsops.RenderError(err, form)
 }
 
 func usage(err error) error { return model.Fail(2, "invalid-arguments", err.Error()) }
@@ -118,7 +143,10 @@ func writeResult(stdout, stderr io.Writer, jsonMode bool, report workspace.Repor
 	if report.Message != "" {
 		fmt.Fprintln(stdout, report.Message)
 	}
-	if report.Workspace != nil {
+	if report.Workspace != nil && report.Command == "path" {
+		// Bare, so a script can say cd "$(workcopy path NAME)".
+		fmt.Fprintln(stdout, report.Workspace.Path)
+	} else if report.Workspace != nil {
 		fmt.Fprintf(stdout, "Workspace: %s\n", report.Workspace.Path)
 	}
 	for _, change := range report.Changes {
@@ -173,7 +201,11 @@ func writeResult(stdout, stderr io.Writer, jsonMode bool, report workspace.Repor
 		fmt.Fprintln(stdout, "Next:", next)
 	}
 	if report.Plan != nil {
-		fmt.Fprintf(stdout, "Plan: %s; %d files; %d source bytes\n", report.Plan.Action, len(report.Plan.Files), report.Plan.SourceBytes)
+		count := len(report.Plan.Files)
+		if report.Plan.FilesOmitted {
+			count = report.Plan.FileCount
+		}
+		fmt.Fprintf(stdout, "Plan: %s; %d files; %d source bytes\n", report.Plan.Action, count, report.Plan.SourceBytes)
 	}
 	if report.Content != nil {
 		encoded, marshalErr := json.Marshal(report.Content)
@@ -233,51 +265,27 @@ func loadSettings(a arguments) (*settings.Resolved, error) {
 	return resolved, nil
 }
 
-func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (workspace.Report, error) {
-	empty := workspace.Report{Command: a.command}
-	allowed := map[string]string{
-		"create": "branch profile project config all share trust-shared dependency-identity agent",
-		"expand": "project", "status": "", "sync": "agent", "list": "", "destroy": "force",
-		"resolve": "use-local use-upstream delete from-file expect-conflict expect-local",
-		"merge":   "commit approve review message no-commit include-files", "content": "side offset limit",
-		"recover": "abandon-review", "share": "path target dependency-identity trust-shared", "unshare": "path",
-		"solution": "solution", "discover": "config", "doctor": "", "legacy": "", "settings": "init agent", "agent-context": "refresh agent",
-	}
-	flags, known := allowed[a.command]
-	if !known {
-		return empty, usage(fmt.Errorf("unknown command %q; run workcopy --help", a.command))
-	}
-	if err := a.allowed(flags); err != nil {
-		return empty, usage(err)
-	}
-	for _, flag := range []string{"repo", "root", "workspace", "config", "target"} {
-		if value := a.value(flag); value != "" {
-			if err := fsops.CheckNativePath(value); err != nil {
-				return empty, err
-			}
-		}
-	}
-	if a.command == "settings" {
-		return showSettings(a, resolved)
-	}
-	if a.command == "doctor" {
-		return doctor(ctx, a)
-	}
-	if a.command == "legacy" {
-		return inspectLegacy(a)
-	}
+// target is the repository, lane root and lane name a command applies to.
+type target struct {
+	repository, root, name string
+	current                *model.Manifest
+}
+
+// locateTarget decides which repository and lane root a command applies to:
+// explicit flags first, then the lane the command runs in, then preferences.
+func locateTarget(a arguments, resolved *settings.Resolved) (target, error) {
 	repository, root, name := a.value("repo"), a.value("root"), a.value("name")
 	var current *model.Manifest
 	if a.value("workspace") != "" {
 		manifest, err := workspace.Locate(a.value("workspace"))
 		if err != nil {
-			return empty, err
+			return target{}, err
 		}
 		current = &manifest
 	} else if repository == "" {
 		directory, err := os.Getwd()
 		if err != nil {
-			return empty, err
+			return target{}, err
 		}
 		if manifest, locateErr := workspace.Locate(directory); locateErr == nil {
 			current = &manifest
@@ -304,21 +312,71 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 	if repository == "" {
 		repository = "."
 	}
-	engine, err := workspace.New(ctx, repository, root)
+	return target{repository: repository, root: root, name: name, current: current}, nil
+}
+
+func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (workspace.Report, error) {
+	empty := workspace.Report{Command: a.command}
+	allowed := map[string]string{
+		"create": "branch profile project config all share trust-shared dependency-identity agent include-files",
+		"expand": "project include-files", "status": "", "path": "", "storage": "", "sync": "agent include-files", "list": "", "destroy": "force",
+		"resolve": "use-local use-upstream delete from-file expect-conflict expect-local",
+		"merge":   "commit approve review message no-commit include-files", "content": "side offset limit",
+		"recover": "abandon-review", "share": "path target dependency-identity trust-shared", "unshare": "path",
+		"solution": "solution", "discover": "config", "doctor": "", "legacy": "", "settings": "init project-file agent", "agent-context": "refresh agent",
+	}
+	flags, known := allowed[a.command]
+	if !known {
+		return empty, usage(fmt.Errorf("unknown command %q; run workcopy --help", a.command))
+	}
+	if err := a.allowed(flags); err != nil {
+		return empty, usage(err)
+	}
+	// A path may be written in either platform's form (C:\... or /mnt/c/...). Work
+	// in this platform's form from here on; Run answers in the caller's.
+	for _, flag := range []string{"repo", "root", "workspace", "config", "target", "from-file"} {
+		if value := a.value(flag); value != "" {
+			native, err := fsops.NormalizeInput(ctx, value)
+			if err != nil {
+				return empty, err
+			}
+			a.values[flag] = []string{native}
+		}
+	}
+	if a.command == "settings" {
+		return showSettings(ctx, a, resolved)
+	}
+	if a.command == "doctor" {
+		return doctor(ctx, a)
+	}
+	if a.command == "legacy" {
+		return inspectLegacy(a)
+	}
+	found, err := locateTarget(a, resolved)
 	if err != nil {
 		return empty, err
 	}
-	engine.Settings = resolved
-	configFile := a.value("config")
-	if configFile == "" {
-		configFile = resolved.String(settings.Config)
-	}
+	repository, root, name := found.repository, found.root, found.name
+	// Usage errors come before anything touches the repository, so a malformed
+	// command is reported the same way from any directory.
 	positional := append([]string(nil), a.positionals...)
 	if a.command != "list" && a.command != "discover" && name == "" && len(positional) > 0 {
 		name, positional = positional[0], positional[1:]
 	}
 	if a.command != "list" && a.command != "discover" && a.command != "agent-context" && name == "" {
 		return empty, usage(errors.New("specify a lane name, --name, or run from inside a Workcopy lane"))
+	}
+	engine, err := workspace.New(ctx, repository, root)
+	if err != nil {
+		return empty, err
+	}
+	if resolved, engine, err = applyProjectSettings(ctx, a, resolved, found, engine); err != nil {
+		return empty, err
+	}
+	engine.Settings = resolved
+	configFile := a.value("config")
+	if configFile == "" {
+		configFile = resolved.String(settings.Config)
 	}
 	dryRun := a.boolean("dry-run")
 	switch a.command {
@@ -355,8 +413,12 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 		return empty, usage(fmt.Errorf("unexpected positional arguments for %s", a.command))
 	}
 	switch a.command {
+	case "path":
+		return engine.Path(ctx, name)
 	case "status":
 		return engine.Status(ctx, name)
+	case "storage":
+		return engine.Storage(ctx, name)
 	case "sync":
 		return engine.Sync(ctx, name, dryRun)
 	case "list":
@@ -404,10 +466,12 @@ Usage:
 	             [--allow-share-target DIRECTORY ...]
   workcopy create NAME [--branch REF] [--profile NAME | --all]
                       [--project ID-OR-PATH ...] [--config FILE] [--dry-run]
-                      [--agent TOOL ...]
-  workcopy expand NAME PROJECT-OR-PATH ...
+                      [--agent TOOL ...] [--include-files]
+  workcopy expand NAME PROJECT-OR-PATH ... [--include-files]
   workcopy status NAME
-  workcopy sync NAME [--dry-run] [--agent TOOL ...]
+  workcopy path NAME
+  workcopy storage NAME
+  workcopy sync NAME [--dry-run] [--agent TOOL ...] [--include-files]
   workcopy resolve NAME PATH --expect-conflict TOKEN
                    (--use-local | --use-upstream | --delete | --from-file FILE)
   workcopy merge NAME [--dry-run] [--include-files]
@@ -421,18 +485,25 @@ Usage:
   workcopy list
   workcopy discover [--config FILE]
   workcopy solution NAME --solution FILE.sln [--dry-run]
-  workcopy settings [--init] [--settings FILE]
+  workcopy settings [--init [--project-file]] [--settings FILE]
   workcopy agent-context [NAME] [--refresh] [--dry-run] [--agent TOOL ...]
   workcopy doctor
   workcopy legacy --workspace OLD-LANE
   workcopy version
 
 Global options: --repo DIRECTORY --root WORKSPACE-ROOT --name NAME
-                --workspace LANE-DIRECTORY --settings FILE --json --help
+                --workspace LANE-DIRECTORY --settings FILE --path-style STYLE
+                --json --help
 
 Preferences (root, owner config, Git program, MCP limits, timeouts, agent
 context) live in one settings file; flags override environment variables,
-which override the file. Run "workcopy settings" to see every value.
+which override the file. Run "workcopy settings" to see every value. A
+repository can carry its own lane root and owner config in its Git directory
+(workcopy settings --init --project-file); they apply to that repository only.
+
+Paths may be written as C:\work\repo or /mnt/c/work/repo whichever
+platform the build runs on; answers use the form you wrote. --path-style
+auto|native|wsl|windows forces one.
 
 Inside a lane, repository/root/name are inferred. Explicit flags win.
 No command fetches, pushes, changes the main checkout, runs a package restore,

@@ -110,6 +110,7 @@ func Doctor(ctx context.Context, version, repository, root string) (Report, erro
 	}
 	if engine, newErr := New(ctx, repository, root); newErr == nil {
 		lines = append(lines, "Repository: "+engine.Repository.Root, "Lane storage: "+engine.WorkRoot)
+		lines = append(lines, volumeLine("Repository volume", engine.Repository.Root), volumeLine("Lane storage volume", engine.WorkRoot))
 		if config, configErr := engine.Repository.CheckoutConfig(ctx); configErr == nil {
 			ending := "LF"
 			if engine.Repository.NativeCRLF() {
@@ -118,6 +119,9 @@ func Doctor(ctx context.Context, version, repository, root string) (Report, erro
 			lines = append(lines, fmt.Sprintf("Line endings: core.autocrlf=%s core.eol=%s (native is %s); lanes mirror what git checkout would write", config.AutoCRLF, config.EOL, ending), fmt.Sprintf("Execute bits: core.fileMode=%t", config.FileMode))
 		}
 		report.Warnings = append(report.Warnings, driveWarnings(runtime.GOOS, runtime.GOOS == "linux" && underWSL(), []storageLocation{{"repository", engine.Repository.Root}, {"lane storage", engine.WorkRoot}})...)
+		if warning := engine.doctorLongPathWarning(ctx); warning != "" {
+			report.Warnings = append(report.Warnings, warning)
+		}
 	} else if repository != "" {
 		lines = append(lines, "No Git repository found at "+repository+"; repository-specific checks were skipped.")
 	}

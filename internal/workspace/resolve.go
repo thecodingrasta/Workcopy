@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"workcopy/internal/eol"
@@ -23,6 +24,9 @@ type ResolveOptions struct {
 func versionBody(reader *git.Reader, store *state.Store, version model.FileVersion) ([]byte, error) {
 	if !version.Exists() {
 		return nil, nil
+	}
+	if version.Large() {
+		return nil, model.Fail(3, "content-too-large", fmt.Sprintf("This content is %d bytes, too large to hold or page through a tool call. Compare the file in the lane with the repository version using your own tools", version.Size))
 	}
 	var body []byte
 	var err error
@@ -91,9 +95,11 @@ func (e *Engine) Resolve(ctx context.Context, name, relative string, options Res
 	desired, body := current, currentBody
 	if options.UseUpstream {
 		desired = conflict.Upstream
-		body, err = versionBody(reader, opened.store, desired)
-		if err != nil {
-			return report, err
+		if !desired.Large() {
+			body, err = versionBody(reader, opened.store, desired)
+			if err != nil {
+				return report, err
+			}
 		}
 	}
 	if options.Delete {
@@ -101,6 +107,9 @@ func (e *Engine) Resolve(ctx context.Context, name, relative string, options Res
 		body = nil
 	}
 	if options.FromFile != "" {
+		if info, statErr := os.Stat(options.FromFile); statErr == nil && info.Size() > model.InlineFileBytes() {
+			return report, model.Fail(3, "resolution-file-too-large", fmt.Sprintf("%s is %d bytes. A resolution file is read into memory, so it is limited to %d MiB; for a larger file edit it in the lane and choose --use-local", options.FromFile, info.Size(), model.InlineFileBytes()>>20))
+		}
 		if options.FromLaneFile {
 			body, err = opened.root.ReadFile(options.FromFile)
 		} else {
@@ -161,7 +170,12 @@ func (e *Engine) Resolve(ctx context.Context, name, relative string, options Res
 		return report, err
 	}
 	if !current.Equal(desired) {
-		if err = tx.Add(relative, current, desired, body, false); err != nil {
+		if desired.Large() {
+			// Written straight from the Git object the conflict recorded.
+			if err = tx.AddFromObject(relative, current, desired); err != nil {
+				return report, err
+			}
+		} else if err = tx.Add(relative, current, desired, body, false); err != nil {
 			return report, err
 		}
 	}

@@ -89,8 +89,11 @@ func (e *Engine) listView(record registration) WorkspaceView {
 	return view
 }
 
+// reviewDirectoryName matches the directory of a review of this lane: the lane
+// name, a hyphen and the first 8 to 32 hex digits of the review's ID. Reviews
+// made before the short form existed use all 32 digits and stay valid.
 func reviewDirectoryName(lane string) *regexp.Regexp {
-	return regexp.MustCompile("^" + regexp.QuoteMeta(lane) + "-[0-9a-f]{32}$")
+	return regexp.MustCompile("^" + regexp.QuoteMeta(lane) + "-[0-9a-f]{8,32}$")
 }
 
 // pathKey makes registered-worktree comparison case-insensitive where the

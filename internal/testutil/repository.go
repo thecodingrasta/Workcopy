@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type Repository struct {
@@ -27,6 +28,9 @@ func NewRepository(t testing.TB) *Repository {
 	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		cleanDirectory(parent)
+	})
 	if err := os.WriteFile(filepath.Join(parent, ".workcopy-fixture-owner"), []byte("Workcopy test fixture root\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +42,11 @@ func NewRepository(t testing.TB) *Repository {
 	r.Git("config", "user.name", "Fixture Author")
 	r.Git("config", "user.email", "fixture@example.invalid")
 	r.Git("config", "core.autocrlf", "false")
+	r.Git("config", "core.fsmonitor", "false")
+	r.Git("config", "gc.auto", "0")
+	r.Git("config", "gc.autoDetach", "false")
+	r.Git("config", "maintenance.auto", "false")
+	r.Git("config", "maintenance.autoDetach", "false")
 	return r
 }
 
@@ -125,7 +134,14 @@ func (r *Repository) GitInput(input string, arguments ...string) string {
 // isolated configuration as the fixture repository.
 func (r *Repository) GitAt(directory, input string, arguments ...string) string {
 	r.T.Helper()
-	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
+	command := exec.Command("git", append([]string{
+		"-C", directory,
+		"-c", "core.fsmonitor=false",
+		"-c", "gc.auto=0",
+		"-c", "gc.autoDetach=false",
+		"-c", "maintenance.auto=false",
+		"-c", "maintenance.autoDetach=false",
+	}, arguments...)...)
 	environment := []string{}
 	for _, v := range os.Environ() {
 		key := strings.ToUpper(strings.SplitN(v, "=", 2)[0])
@@ -158,4 +174,14 @@ func (r *Repository) Commit(message string) string {
 	r.Git("add", "--all")
 	r.Git("commit", "-m", message)
 	return r.Git("rev-parse", "HEAD")
+}
+
+func cleanDirectory(dir string) {
+	for attempt := 0; attempt < 10; attempt++ {
+		err := os.RemoveAll(dir)
+		if err == nil || os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }

@@ -19,13 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
+          go-version: '1.27.4'
           cache: false
       - name: Verify the existing tag and package
         env:
@@ -35,8 +35,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          test "$(git rev-parse --verify --end-of-options "refs/tags/$VERSION^{commit}")" = "$GITHUB_SHA"
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Invalid version::The version input is not a release tag. Use the form v0.1.5 or v0.1.5-rc.1."
+            exit 1
+          fi
+          if ! tag_commit="$(git rev-parse --verify --end-of-options "refs/tags/$VERSION^{commit}" 2>/dev/null)"; then
+            echo "::error title=Tag not found::The tag $VERSION does not exist in this checkout. Create and push it, then run the workflow again."
+            exit 1
+          fi
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "::error title=Tag does not match the validated commit::The tag $VERSION points at $tag_commit, but this run started from $GITHUB_SHA ($GITHUB_REF). Packaging a different commit than the one validated is refused. Either run the workflow with 'Use workflow from' set to the tag $VERSION, or move the tag to the commit you validated."
+            exit 1
+          fi
           go run ./tools/dev package "$VERSION"
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

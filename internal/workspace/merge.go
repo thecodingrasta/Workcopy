@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -117,18 +118,21 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	if err != nil {
 		return report, err
 	}
-	receipt := model.Review{ID: id, Path: filepath.Join(e.WorkRoot, ".workcopy-reviews", name+"-"+id), State: "preparing", BaseCommit: commit, Files: map[string]model.FileVersion{}}
+	directoryName, err := e.newReviewDirectory(name, id)
+	if err != nil {
+		return report, err
+	}
+	receipt := model.Review{ID: id, Path: filepath.Join(e.WorkRoot, ".workcopy-reviews", directoryName), State: "preparing", BaseCommit: commit, Files: map[string]model.FileVersion{}}
 	reader, err := e.Repository.Reader(ctx)
 	if err != nil {
 		return report, err
 	}
 	defer reader.Close()
 	for _, filename := range names {
-		body, readErr := reader.Read(tree[filename].ObjectID)
-		if readErr != nil {
-			return report, readErr
+		if err = ctx.Err(); err != nil {
+			return report, err
 		}
-		version, versionErr := entryVersion(tree[filename], body, plan.rule(filename))
+		version, body, versionErr := entryVersionFrom(reader, tree[filename], plan.rule(filename))
 		if versionErr != nil {
 			return report, versionErr
 		}
@@ -156,8 +160,10 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 				return report, err
 			}
 		}
-		if _, err = opened.store.PutBlob(body); err != nil {
-			return report, err
+		if !version.Large() {
+			if _, err = opened.store.PutBlob(body); err != nil {
+				return report, err
+			}
 		}
 		receipt.Files[change.Path] = version
 	}
@@ -189,6 +195,11 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	report.Workspace = view(fresh)
 	report.Generation = fresh.Manifest.Generation
 	report.Message = "Unstaged review worktree prepared. Review its diff before an explicit commit. Main checkout was not changed."
+	if report.Review != nil {
+		if warning := e.reviewLongPathWarning(ctx, *report.Review); warning != "" {
+			report.Warnings = append(report.Warnings, warning)
+		}
+	}
 	return report, nil
 }
 func saveSnapshot(store *state.Store, next model.Snapshot) error {
@@ -221,11 +232,40 @@ func replaceReview(store *state.Store, receipt model.Review) (model.Snapshot, er
 	}
 	return next, saveSnapshot(store, next)
 }
+
+// shortReviewDigits is how much of a review's ID names its directory. A review
+// worktree's path counts against Windows' 260-character limit on every file in
+// it, so the name stays short; the whole ID is still recorded in the receipt.
+const shortReviewDigits = 8
+
+// newReviewDirectory chooses the directory name for a new review: the lane name
+// and the first digits of the ID, lengthened if that name is already taken.
+func (e *Engine) newReviewDirectory(lane, id string) (string, error) {
+	for digits := shortReviewDigits; digits <= len(id); digits += 4 {
+		candidate := lane + "-" + id[:digits]
+		if _, err := os.Lstat(filepath.Join(e.WorkRoot, ".workcopy-reviews", candidate)); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", model.Fail(3, "review-path-taken", "No free review directory name could be chosen")
+}
+
+// validateReviewPath proves a receipt owns the directory it names: it must be
+// exactly <root>/.workcopy-reviews/<lane>-<digits>, where the digits are a
+// prefix of the receipt's own ID. That covers the short form and the 32-digit
+// form older versions wrote, and nothing else.
 func (e *Engine) validateReviewPath(snapshot model.Snapshot, receipt model.Review) error {
-	if !model.ValidID(receipt.ID) || receipt.Path != filepath.Join(e.WorkRoot, ".workcopy-reviews", snapshot.Manifest.Name+"-"+receipt.ID) {
+	if !model.ValidID(receipt.ID) {
 		return model.Fail(3, "review-ownership-mismatch", "Review path does not match its receipt")
 	}
-	return nil
+	for digits := shortReviewDigits; digits <= len(receipt.ID); digits++ {
+		if receipt.Path == filepath.Join(e.WorkRoot, ".workcopy-reviews", snapshot.Manifest.Name+"-"+receipt.ID[:digits]) {
+			return nil
+		}
+	}
+	return model.Fail(3, "review-ownership-mismatch", "Review path does not match its receipt")
 }
 func (e *Engine) finishReview(ctx context.Context, store *state.Store, receipt model.Review) error {
 	snapshot, err := store.Load()
@@ -411,6 +451,34 @@ func compareReviewFiles(ctx context.Context, root *fsops.Root, receipt model.Rev
 	})
 }
 
+// writeLargeReviewFile writes one large file into the review worktree. A file
+// that came from Git is streamed from its object; one the lane added or changed
+// has no object yet, so it is streamed from the lane file. Either way the bytes
+// are verified against the receipt's hash as they pass, so a lane file edited
+// since the review was prepared is refused instead of copied.
+func (e *Engine) writeLargeReviewFile(ctx context.Context, review *fsops.Root, reader *git.Reader, store *state.Store, name string, version model.FileVersion) error {
+	mode := os.FileMode(version.Mode)
+	if version.ObjectID != "" {
+		return review.WriteAtomicFrom(name, mode, version.Size, version.Hash, func(w io.Writer) error {
+			_, err := reader.Stream(version.ObjectID, &contextWriter{ctx: ctx, w: w})
+			return err
+		})
+	}
+	info, err := store.Root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	file, err := store.Root.OpenRegular(name, info)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return review.WriteAtomicFrom(name, mode, version.Size, version.Hash, func(w io.Writer) error {
+		_, copyErr := io.CopyBuffer(&contextWriter{ctx: ctx, w: w}, file, make([]byte, 1<<20))
+		return copyErr
+	})
+}
+
 // materializeReview writes the named receipt files into the review worktree.
 // Blobs come from Git through one sequential pipe, one bounded chunk at a time,
 // and are written concurrently.
@@ -422,10 +490,19 @@ func (e *Engine) materializeReview(ctx context.Context, root *fsops.Root, reader
 		}
 		reportProgress(ctx, "Preparing review files", start, len(names))
 		bodies := [][]byte{}
+		large := []string{}
 		var total int64
 		end := start
 		for end < len(names) && end-start < chunkFiles && (end == start || total < chunkBytes) {
-			body, err := versionBody(reader, store, receipt.Files[names[end]])
+			version := receipt.Files[names[end]]
+			if version.Large() {
+				// Streamed below, one at a time, never held in memory.
+				large = append(large, names[end])
+				bodies = append(bodies, nil)
+				end++
+				continue
+			}
+			body, err := versionBody(reader, store, version)
 			if err != nil {
 				return err
 			}
@@ -436,12 +513,20 @@ func (e *Engine) materializeReview(ctx context.Context, root *fsops.Root, reader
 		if err := fsops.Parallel(ctx, end-start, func(index int) error {
 			name := names[start+index]
 			version := receipt.Files[name]
+			if version.Large() {
+				return nil
+			}
 			if version.Kind == model.Symlink {
 				return root.ReplaceSymlink(name, string(bodies[index]), false)
 			}
 			return root.WriteAtomic(name, eol.ToLane(bodies[index], version.Eol), os.FileMode(version.Mode))
 		}); err != nil {
 			return err
+		}
+		for _, name := range large {
+			if err := e.writeLargeReviewFile(ctx, root, reader, store, name, receipt.Files[name]); err != nil {
+				return err
+			}
 		}
 		start = end
 	}

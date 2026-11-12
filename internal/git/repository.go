@@ -5,12 +5,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -49,15 +52,54 @@ func Environment() []string {
 	}
 	return append(result, "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_CONFIG_NOSYSTEM=1")
 }
+
+// RunUnforced runs a read-only Git command with the repository's own
+// configuration and none of the overrides Workcopy applies to itself, for
+// questions about how the user's Git is set up.
+func (r *Repository) RunUnforced(ctx context.Context, directory string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, r.Executable, append([]string{"--no-pager", "-C", directory}, args...)...)
+	command.Env = Environment()
+	return command.Output()
+}
+
 func (r *Repository) Command(ctx context.Context, directory string, args ...string) *exec.Cmd {
-	prefix := []string{"--no-pager", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "core.autocrlf=false", "-c", "core.safecrlf=false", "-c", "core.attributesFile=" + os.DevNull, "-c", "core.excludesFile=" + os.DevNull, "-c", "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "commit.gpgSign=false", "-c", "core.quotePath=false", "-C", directory}
+	prefix := []string{"--no-pager"}
+	if runtime.GOOS == "windows" {
+		// Git for Windows refuses paths of 260 characters or more unless told
+		// otherwise, however the operating system is configured. Review
+		// worktrees sit deep inside a lane root, so Workcopy's own Git commands
+		// always allow them. It does not touch the repository's configuration.
+		prefix = append(prefix, "-c", "core.longpaths=true")
+	}
+	prefix = append(prefix,
+		"-c", "core.hooksPath="+os.DevNull,
+		"-c", "core.fsmonitor=false",
+		"-c", "core.autocrlf=false",
+		"-c", "core.safecrlf=false",
+		"-c", "core.attributesFile="+os.DevNull,
+		"-c", "core.excludesFile="+os.DevNull,
+		"-c", "submodule.recurse=false",
+		"-c", "protocol.allow=never",
+		"-c", "commit.gpgSign=false",
+		"-c", "core.quotePath=false",
+		"-c", "gc.auto=0",
+		"-c", "gc.autoDetach=false",
+		"-c", "maintenance.auto=false",
+		"-c", "maintenance.autoDetach=false",
+		"-C", directory)
 	cmd := exec.CommandContext(ctx, r.Executable, append(prefix, args...)...)
 	cmd.Env = Environment()
 	return cmd
 }
 func (r *Repository) Run(ctx context.Context, directory string, input []byte, args ...string) ([]byte, error) {
+	return r.RunReader(ctx, directory, bytes.NewReader(input), args...)
+}
+
+// RunReader is Run with standard input streamed from a reader, for content too
+// large to hold in memory.
+func (r *Repository) RunReader(ctx context.Context, directory string, input io.Reader, args ...string) ([]byte, error) {
 	command := r.Command(ctx, directory, args...)
-	command.Stdin = bytes.NewReader(input)
+	command.Stdin = input
 	var output, diagnostics bytes.Buffer
 	command.Stdout = &limitedWriter{Writer: &output, Remaining: 64 << 20}
 	command.Stderr = &limitedWriter{Writer: &diagnostics, Remaining: 64 << 10}
@@ -242,41 +284,106 @@ func (r *Repository) Reader(ctx context.Context) (*Reader, error) {
 	}
 	return reader, nil
 }
+
+// request asks Git for one object and returns its size once the header has been
+// read. The caller must consume exactly that many bytes plus the terminator
+// (finish), or mark the reader failed: the pipe is shared by every request.
+func (r *Reader) request(id string) (int64, error) {
+	if !ValidObjectID(id) {
+		return 0, fmt.Errorf("invalid blob ID")
+	}
+	if r.closed || r.failed {
+		return 0, fmt.Errorf("blob reader closed or failed")
+	}
+	if _, err := fmt.Fprintln(r.input, id); err != nil {
+		return 0, err
+	}
+	header, err := r.output.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 || fields[0] != id || fields[1] != "blob" {
+		return 0, fmt.Errorf("object is unavailable or not a blob: %s", id)
+	}
+	size, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil || size < 0 {
+		return 0, fmt.Errorf("invalid blob size from Git")
+	}
+	if size > model.MaxFileBytes() {
+		return 0, fmt.Errorf("blob is %d bytes, over the %d MiB file limit (WORKCOPY_MAX_FILE_MIB)", size, model.MaxFileBytes()>>20)
+	}
+	return size, nil
+}
+
+// finish consumes the newline Git writes after every object.
+func (r *Reader) finish() error {
+	terminator, err := r.output.ReadByte()
+	if err != nil {
+		return err
+	}
+	if terminator != '\n' {
+		return fmt.Errorf("invalid Git batch terminator")
+	}
+	return nil
+}
+
+// Read returns a blob held in memory. A blob above the in-memory threshold is
+// refused: callers route those through Stream or HashStream.
 func (r *Reader) Read(id string) (data []byte, result error) {
 	defer func() {
 		if result != nil {
 			r.failed = true
 		}
 	}()
-	if !ValidObjectID(id) {
-		return nil, fmt.Errorf("invalid blob ID")
-	}
-	if r.closed || r.failed {
-		return nil, fmt.Errorf("blob reader closed or failed")
-	}
-	if _, err := fmt.Fprintln(r.input, id); err != nil {
-		return nil, err
-	}
-	header, err := r.output.ReadString('\n')
+	size, err := r.request(id)
 	if err != nil {
 		return nil, err
 	}
-	fields := strings.Fields(header)
-	if len(fields) != 3 || fields[0] != id || fields[1] != "blob" {
-		return nil, fmt.Errorf("object is unavailable or not a blob: %s", id)
+	if size > model.InlineFileBytes() {
+		return nil, fmt.Errorf("blob is %d bytes, over the %d MiB in-memory threshold; stream it", size, model.InlineFileBytes()>>20)
 	}
-	size, err := strconv.ParseInt(fields[2], 10, 64)
-	if err != nil || size < 0 || size > model.MaxFileBytes {
-		return nil, fmt.Errorf("blob exceeds 64 MiB limit")
-	}
-	body := make([]byte, int(size)+1)
+	body := make([]byte, int(size))
 	if _, err = io.ReadFull(r.output, body); err != nil {
 		return nil, err
 	}
-	if body[len(body)-1] != '\n' {
-		return nil, fmt.Errorf("invalid Git batch terminator")
+	if err = r.finish(); err != nil {
+		return nil, err
 	}
-	return body[:len(body)-1], nil
+	return body, nil
+}
+
+// Stream copies a blob of any size into w without holding it, and returns its
+// length. If w fails part way the reader is marked failed, because the unread
+// remainder is still in the pipe.
+func (r *Reader) Stream(id string, w io.Writer) (written int64, result error) {
+	defer func() {
+		if result != nil {
+			r.failed = true
+		}
+	}()
+	size, err := r.request(id)
+	if err != nil {
+		return 0, err
+	}
+	written, err = io.CopyBuffer(w, io.LimitReader(r.output, size), make([]byte, 1<<20))
+	if err != nil {
+		return written, err
+	}
+	if written != size {
+		return written, io.ErrUnexpectedEOF
+	}
+	return written, r.finish()
+}
+
+// HashStream returns the SHA-256 and length of a blob without keeping it.
+func (r *Reader) HashStream(id string) (string, int64, error) {
+	hasher := sha256.New()
+	size, err := r.Stream(id, hasher)
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), size, nil
 }
 func (r *Reader) Close() error {
 	if r.closed {

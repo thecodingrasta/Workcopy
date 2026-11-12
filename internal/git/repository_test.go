@@ -12,6 +12,22 @@ import (
 	"workcopy/internal/testutil"
 )
 
+func TestCommandDisablesDetachedBackgroundMaintenance(t *testing.T) {
+	repository := &Repository{Executable: "git"}
+	cmd := repository.Command(context.Background(), ".", "status")
+	args := strings.Join(cmd.Args, " ")
+	for _, expected := range []string{
+		"gc.auto=0",
+		"gc.autoDetach=false",
+		"maintenance.auto=false",
+		"maintenance.autoDetach=false",
+	} {
+		if !strings.Contains(args, expected) {
+			t.Errorf("r.Command missing %q, got: %s", expected, args)
+		}
+	}
+}
+
 func TestReadsCommitInsteadOfDirtyCheckout(t *testing.T) {
 	f := testutil.NewRepository(t)
 	f.Write("file", "committed")

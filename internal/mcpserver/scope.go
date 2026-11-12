@@ -10,11 +10,13 @@ import (
 
 	"workcopy/internal/fsops"
 	"workcopy/internal/model"
+	"workcopy/internal/settings"
 	"workcopy/internal/workspace"
 )
 
-func directoryScope(directory string, scope Scope) (Scope, error) {
-	if err := fsops.CheckNativePath(directory); err != nil {
+func directoryScope(ctx context.Context, directory string, scope Scope) (Scope, error) {
+	directory, err := fsops.NormalizeInput(ctx, directory)
+	if err != nil {
 		return Scope{}, err
 	}
 	if !filepath.IsAbs(directory) || scope.Repo != "" || scope.Root != "" {
@@ -32,6 +34,14 @@ func directoryScope(directory string, scope Scope) (Scope, error) {
 }
 
 func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*Server, error) {
+	// Either platform's spelling of a path is accepted; work in this one's.
+	var err error
+	if scope.Repo, err = fsops.NormalizeInput(ctx, scope.Repo); err != nil {
+		return nil, err
+	}
+	if scope.Root, err = fsops.NormalizeInput(ctx, scope.Root); err != nil {
+		return nil, err
+	}
 	if scope.Repo == "" && scope.Root == "" && s.engine != nil {
 		return s, nil
 	}
@@ -45,17 +55,15 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 		}
 		return nil, model.Fail(2, "repository-required", "Pass repo as the absolute checkout path to workcopy_bootstrap, then retain the returned repo/root scope for lane calls")
 	}
-	for _, value := range []string{scope.Repo, scope.Root} {
-		if value != "" {
-			if err := fsops.CheckNativePath(value); err != nil {
-				return nil, err
-			}
-		}
-	}
 	if !filepath.IsAbs(repo) || (scope.Root != "" && !filepath.IsAbs(scope.Root)) {
 		return nil, model.Fail(2, "absolute-scope-required", "repo and root must be absolute local paths")
 	}
 	engine, err := workspace.New(ctx, repo, scope.Root)
+	if err != nil {
+		return nil, err
+	}
+	// A repository can carry its own lane root and owner configuration.
+	project, err := projectSettings(s.opts.Settings, engine.Repository.CommonDir)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +83,8 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 		root := ""
 		if sameDefault {
 			root = s.engine.WorkRoot
+		} else if project.Entry(settings.Root).Source == "project" {
+			root = project.String(settings.Root)
 		} else if s.opts.Root != "" {
 			parent := s.opts.Root
 			if s.engine != nil {
@@ -90,10 +100,12 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 			}
 		}
 	}
-	engine.Settings = s.opts.Settings
+	engine.Settings = project
 	selected := &Server{engine: engine, opts: s.opts}
 	if sameDefault {
 		selected.configData, selected.configErr = s.configData, s.configErr
+	} else if project.Entry(settings.Config).Source == "project" {
+		selected.opts.ConfigPath, selected.configData, selected.configErr = readOwnerConfig(project.String(settings.Config))
 	}
 	return selected, nil
 }

@@ -437,6 +437,10 @@ func TestMCPRefusalsMatchTheCommandLine(t *testing.T) {
 // repository still works when the oversized path is left out of the selection.
 func TestOversizedFilesAreRefusedUnlessLeftOutOfTheSelection(t *testing.T) {
 	t.Parallel()
+	// The limit is the owner's setting (default 2 GiB; large_files_test.go covers
+	// files well over the old fixed 64 MiB). The smallest allowed value makes a
+	// real refusal cheap to produce.
+	limit := []string{"WORKCOPY_MAX_FILE_MIB=64"}
 	r := testutil.NewRepository(t)
 	commitRawEntries(t, r, []rawEntry{
 		{"100644", ".workcopy.json", `{"schemaVersion":1,"projects":[{"id":"ok","path":"ok"}]}`},
@@ -444,13 +448,13 @@ func TestOversizedFilesAreRefusedUnlessLeftOutOfTheSelection(t *testing.T) {
 		{"100644", "assets/huge.bin", string(xorshiftBytes(65 << 20))},
 	}, false)
 	root := filepath.Join(r.Parent, "lanes")
-	stdout, _, code := run(t, r.Path, nil, "create", "l1", "--all", "--root", root, "--json")
+	stdout, _, code := run(t, r.Path, limit, "create", "l1", "--all", "--root", root, "--json")
 	errorCodeValue, message := errorOf(t, stdout)
-	if code != 3 || errorCodeValue != "unsupported-source-entry" || !strings.Contains(message, "64 MiB") || !strings.Contains(message, "assets/huge.bin") || strings.Contains(message, "submodule") {
+	if code != 3 || errorCodeValue != "unsupported-source-entry" || !strings.Contains(message, "64 MiB") || !strings.Contains(message, "WORKCOPY_MAX_FILE_MIB") || !strings.Contains(message, "assets/huge.bin") || strings.Contains(message, "submodule") {
 		t.Fatalf("an oversized file must be named with the limit and not confused with a submodule: %d %s", code, stdout)
 	}
 	assertNothingCreated(t, r.Path, root)
-	created := laneReport(t, r.Path, nil, 0, "create", "l2", "--project", "ok", "--root", root)
+	created := laneReport(t, r.Path, limit, 0, "create", "l2", "--project", "ok", "--root", root)
 	assertLaneMirrorsCommitSubset(t, created.Workspace.Path, map[string]string{"ok/fine.txt": "fine\n", ".workcopy.json": "*"})
 	laneReport(t, created.Workspace.Path, nil, 0, "destroy", "--force")
 }

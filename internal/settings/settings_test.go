@@ -121,7 +121,8 @@ func TestInvalidValuesAreRejectedWithTheKeyAndTheRange(t *testing.T) {
 		JSON: "maybe", AgentContextMaxFileKiB: "99999", AgentContextInclude: "../escape/**",
 	}
 	if runtime.GOOS != "windows" {
-		bad[Repo] = `C:\repo`
+		// A network share exists on no POSIX system; a drive letter would be valid under WSL.
+		bad[Repo] = `\\server\share\repo`
 	}
 	for key, value := range bad {
 		_, err := Load(inputs("", map[string]string{key: value}, nil))

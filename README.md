@@ -5,7 +5,7 @@
 [![Native CI](https://github.com/thecodingrasta/workcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/thecodingrasta/workcopy/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/thecodingrasta/workcopy?include_prereleases)](https://github.com/thecodingrasta/workcopy/releases)
 [![Licence: GPL v3 or later](https://img.shields.io/badge/licence-GPLv3%2B-blue.svg)](LICENSE)
-[![Go 1.25+](https://img.shields.io/badge/source-Go%201.25%2B-00ADD8.svg)](go.mod)
+[![Go 1.27+](https://img.shields.io/badge/source-Go%201.27%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-stdio-6750A4.svg)](docs/mcp.md)
 
 Workcopy copies committed source into a plain folder called a **lane**. No `.git` inside it, so nothing can reset a branch, corrupt an index or push anywhere. Edit, build and test there. When you're done, Workcopy prepares a separate, unstaged review for a human to check before anything is integrated. Your real checkout is never touched.
@@ -39,9 +39,9 @@ Needs Git 2.43 or newer. Go is only needed to build from source.
 2. Verify the checksum, then put `workcopy` (or `workcopy.exe`) on your `PATH`. No archive to extract.
 3. Run `workcopy version` then `workcopy doctor` to confirm it works.
 
-Before the first published release, use the [Windows amd64 bootstrap candidate](prebuilt/README.md); it is a legacy ZIP-based exception. Other platforms are available as [CI artifacts](https://github.com/thecodingrasta/workcopy/actions/workflows/ci.yml) (GitHub sign-in required), and normal release assets are bare executables.
+[Install](docs/install.md) has the per-platform verification commands. Release assets are bare executables for Windows, Linux and macOS (x64 and arm64) with one `SHA256SUMS` covering every file. Old pre-release builds are not part of the repository; use the current release.
 
-Building from source needs at least Go 1.25:
+Building from source needs Go 1.27.4 or newer:
 
 ```sh
 go run ./tools/dev setup
@@ -124,7 +124,7 @@ Build and test inside the lane. Workcopy doesn't run scripts or install packages
 - Lanes are workflow boundaries, not security sandboxes. Use host/OS permissions when real isolation matters.
 - `destroy` protects uncommitted contributions and conflicts. `--force` discards your own changes, never shared targets.
 - Local filesystems only. Network shares and cloud-synced folders aren't supported. Under WSL, a repository on `/mnt/c` is slow with the Linux build because every file call crosses to Windows: keep lane storage on the WSL filesystem (`WORKCOPY_ROOT`; about 12 times faster), or use the Windows build. [Which setup to use, what it costs and why](docs/wsl.md).
-- Git filters, LFS, submodules, files over 64 MiB, and repos over 100,000 tracked paths are rejected explicitly, as are tracked paths that cannot be written safely on every platform (reserved Windows names, `:`, trailing dots, `.git`). Each refusal names the path and the fix, and happens before anything is written ([refusals](docs/troubleshooting.md#create-is-refused)).
+- Git filters, LFS, submodules, tracked files over the `WORKCOPY_MAX_FILE_MIB` limit (default 2 GiB; files over 64 MiB are streamed, never loaded whole), and repos over 100,000 tracked paths are rejected explicitly, as are tracked paths that cannot be written safely on every platform (reserved Windows names, `:`, trailing dots, `.git`). Each refusal names the path and the fix, and happens before anything is written ([refusals](docs/troubleshooting.md#create-is-refused)).
 
 Preferences you would otherwise repeat on every command or server definition (lane location, owner config, timeouts, limits, Git program, agent-context rules) live in one [settings file](docs/settings.md). New lanes also receive a lean, safe copy of your untracked [agent instructions](docs/agent-context.md) (AGENTS.md, steering, rules, skills for Kiro, Claude, Codex, Gemini, Cursor and more).
 

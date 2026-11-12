@@ -13,7 +13,7 @@ import (
 func sharingFixture(t *testing.T) (*Engine, string, string) {
 	t.Helper()
 	repository := testfixture.NewRepository(t)
-	repository.Write("A/A.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n")
+	repository.Write("A/A.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net11.0</TargetFramework></PropertyGroup></Project>\n")
 	repository.Write("A/Source.cs", "class Source {}\n")
 	repository.Write(".gitignore", "packages/\n")
 	repository.Commit("base")

@@ -4,6 +4,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -40,11 +41,25 @@ type Change struct {
 	Kind string `json:"kind"`
 }
 type Plan struct {
-	Action      string   `json:"action"`
-	Files       []string `json:"files"`
-	SourceBytes int64    `json:"sourceBytes"`
-	Effects     []string `json:"effects,omitempty"`
+	Action string   `json:"action"`
+	Files  []string `json:"files"`
+	// FileCount is how many files the plan covers. It is set for the plans that
+	// list files (create, expand, sync) so a caller that is not given the list
+	// still knows its size.
+	FileCount int `json:"fileCount,omitempty"`
+	// FilesOmitted is true when Files was left out to keep the output small; the
+	// CLI does this unless asked with --include-files.
+	FilesOmitted bool     `json:"filesOmitted,omitempty"`
+	SourceBytes  int64    `json:"sourceBytes"`
+	Effects      []string `json:"effects,omitempty"`
 }
+
+// Inventory reports whether the plan lists files, as opposed to naming the one
+// lane or path a command acts on.
+func (p *Plan) Inventory() bool {
+	return p != nil && (p.Action == "create" || p.Action == "expand" || p.Action == "sync")
+}
+
 type Content struct {
 	Side       string `json:"side"`
 	Encoding   string `json:"encoding"`
@@ -73,6 +88,7 @@ type Report struct {
 	Config        *model.Config    `json:"config,omitempty"`
 	Settings      []settings.Entry `json:"settings,omitempty"`
 	AgentContext  *ContextReport   `json:"agentContext,omitempty"`
+	Storage       *StorageReport   `json:"storage,omitempty"`
 }
 type registration struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -87,8 +103,13 @@ type registration struct {
 	Seed        *model.Snapshot              `json:"seed,omitempty"`
 	Quarantine  string                       `json:"quarantine,omitempty"`
 	DeleteFiles map[string]model.FileVersion `json:"deleteFiles,omitempty"`
-	DeleteDirs  []string                     `json:"deleteDirs,omitempty"`
-	Force       bool                         `json:"force,omitempty"`
+	// DeleteVolatile names entries of DeleteFiles whose content is not verified
+	// before removal: build output the owner declared disposable and leftover
+	// temporary files. Nothing about them is worth reading, and a build can leave
+	// files far larger than Workcopy would ever hold in memory.
+	DeleteVolatile []string `json:"deleteVolatile,omitempty"`
+	DeleteDirs     []string `json:"deleteDirs,omitempty"`
+	Force          bool     `json:"force,omitempty"`
 }
 type lane struct {
 	root     *fsops.Root
@@ -203,6 +224,14 @@ func (e *Engine) rootLock() (*fsops.Root, *state.Lock, error) {
 	}
 	return root, lock, nil
 }
+
+// foreignLane marks a registration that belongs to another repository sharing the
+// workspace root. It is still a *model.Failure to callers that only report it.
+type foreignLane struct{ failure *model.Failure }
+
+func (f foreignLane) Error() string { return f.failure.Error() }
+func (f foreignLane) Unwrap() error { return f.failure }
+
 func registrationPath(name string) string { return ".workcopy-registry/" + name + ".json" }
 func (e *Engine) readRegistration(name string) (registration, error) {
 	var record registration
@@ -223,6 +252,11 @@ func (e *Engine) readRegistration(name string) (registration, error) {
 	}
 	if err = model.DecodeStrict(body, &record); err != nil {
 		return record, err
+	}
+	if record.SchemaVersion == 1 && record.Name == name && record.Path == filepath.Join(e.WorkRoot, name) && model.ValidID(record.ID) && record.CommonGitDir != e.Repository.CommonDir {
+		// A well-formed registration that another repository made in a shared
+		// root. Not this repository's lane, and not corruption.
+		return record, foreignLane{&model.Failure{Exit: 3, Code: "ownership-mismatch", Message: fmt.Sprintf("The lane %q in this workspace root belongs to a different repository (%s). Give this repository its own root, or another lane name", name, filepath.Dir(record.CommonGitDir))}}
 	}
 	if record.SchemaVersion != 1 || record.Name != name || record.Path != filepath.Join(e.WorkRoot, name) || record.CommonGitDir != e.Repository.CommonDir || !model.ValidID(record.ID) {
 		return record, model.Fail(3, "ownership-mismatch", "Registration identity does not match this lane and repository")
@@ -386,6 +420,10 @@ func (e *Engine) scan(ctx context.Context, opened *lane) (map[string]model.FileV
 		if name == ".workcopy" || strings.HasPrefix(name, ".workcopy/") {
 			continue
 		}
+		if fsops.IsTempArtifact(name) {
+			// Left by an atomic write that was cut off; never source.
+			continue
+		}
 		if _, isContext := copied[name]; isContext {
 			// A private copy of agent instructions, not source.
 			continue
@@ -516,6 +554,11 @@ func (e *Engine) List(ctx context.Context) (Report, error) {
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
 		record, readErr := e.readRegistration(name)
+		var foreign foreignLane
+		if errors.As(readErr, &foreign) {
+			// Several repositories may share one root; list shows this one's lanes.
+			continue
+		}
 		if readErr != nil {
 			return report, readErr
 		}

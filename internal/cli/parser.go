@@ -19,13 +19,13 @@ var valueFlags = map[string]bool{
 	"expect-local": true, "expect-conflict": true, "from-file": true, "review": true,
 	"message": true, "side": true, "offset": true, "limit": true,
 	"solution": true, "path": true, "target": true, "dependency-identity": true,
-	"share": true, "settings": true, "agent": true,
+	"share": true, "settings": true, "agent": true, "path-style": true,
 }
 var boolFlags = map[string]bool{
 	"json": true, "help": true, "dry-run": true, "all": true,
 	"force": true, "use-local": true, "use-upstream": true,
 	"delete": true, "commit": true, "approve": true,
-	"no-commit": true, "trust-shared": true, "abandon-review": true, "include-files": true, "init": true, "refresh": true,
+	"no-commit": true, "project-file": true, "trust-shared": true, "abandon-review": true, "include-files": true, "init": true, "refresh": true,
 }
 
 func parse(input []string) (arguments, error) {
@@ -98,7 +98,7 @@ func (a arguments) value(key string) string {
 func (a arguments) boolean(key string) bool { return len(a.values[key]) != 0 }
 
 func (a arguments) allowed(additional string) error {
-	allowed := " repo root workspace name json help dry-run settings " + additional + " "
+	allowed := " repo root workspace name json help dry-run settings path-style " + additional + " "
 	for key := range a.values {
 		if !strings.Contains(allowed, " "+key+" ") {
 			return fmt.Errorf("--%s is not valid for %s", key, a.command)

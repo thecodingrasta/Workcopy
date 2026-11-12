@@ -13,6 +13,25 @@ Edit the printed lane directory. It is ordinary editable source, not a Git check
 
 `workcopy expand fix-parser src/Extra` adds a project directory. Existing local edits remain in place. Root files and the lane's saved selection rules remain consistent across status, sync and review.
 
+## Building and testing inside a lane
+
+Workcopy never runs your build, tests or scripts. It gives each lane its own directory, so a build or test run there uses that lane's source, and its output (`bin`, `obj`, `node_modules`) stays in the lane. Two lanes, or two repositories, can build at the same time without touching each other or the main checkout.
+
+The only thing a script needs is the lane's directory:
+
+```sh
+workcopy path fix-parser                      # prints the directory and nothing else
+cd "$(workcopy path fix-parser)" && dotnet test
+```
+
+```powershell
+Set-Location (workcopy path fix-parser); dotnet test
+```
+
+`path` reads only the registry, so it is cheap to call at the top of every script. With a [repository settings file](settings.md#one-file-per-repository) it also needs no `--repo`, `--root` or `--config`. From inside a lane it needs no arguments at all. In JSON mode (`workcopy path fix-parser --json`) the answer is `workspace.path`. Each lane also records its identity and source repository in `.workcopy/manifest.json`; a script that has only a directory can ask `workcopy status --workspace DIRECTORY`.
+
+A repository's own scripts that resolve their location from a fixed checkout path (for example a test manager that hard-codes `$RepoRoot`, or an IIS configuration pointing at the main checkout) run against the main checkout wherever they are started. That is the script's path logic, not something Workcopy can change from outside: make such a script take the root from its own location (`$PSScriptRoot`; `git rev-parse` does not work in a lane, which has no `.git`) or from an argument, and pass the lane directory. Workcopy copies your untracked agent and tool scripts into a lane only when you list them in `WORKCOPY_AGENT_CONTEXT_INCLUDE`.
+
 ## Agent instructions
 
 Each new lane receives a private copy of your untracked agent instruction files (rules, steering, prompts, skills) so an agent in the lane works with the project's guidance. They are not source: `status`, reviews and commits ignore them, and `destroy` discards them. `agent-context --refresh` (and `sync`) bring them up to date. See [agent context](agent-context.md).

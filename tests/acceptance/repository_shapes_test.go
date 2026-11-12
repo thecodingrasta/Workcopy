@@ -33,7 +33,14 @@ import (
 // returns stdout exactly as written (no trimming, so blobs stay byte-exact).
 func isolatedGit(t *testing.T, directory string, stdin []byte, arguments ...string) []byte {
 	t.Helper()
-	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
+	command := exec.Command("git", append([]string{
+		"-C", directory,
+		"-c", "core.fsmonitor=false",
+		"-c", "gc.auto=0",
+		"-c", "gc.autoDetach=false",
+		"-c", "maintenance.auto=false",
+		"-c", "maintenance.autoDetach=false",
+	}, arguments...)...)
 	for _, value := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(value), "GIT_") {
 			command.Env = append(command.Env, value)

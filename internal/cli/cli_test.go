@@ -63,3 +63,30 @@ func TestHumanOutputFailureReturnsOperationalFailure(t *testing.T) {
 		t.Fatalf("broken stderr returned %d instead of 5", code)
 	}
 }
+
+// storage takes no command-specific flags: an unknown one is a usage error, the
+// same as for status, and a JSON run carries the ledger.
+func TestStorageCommandRejectsUnknownFlagsAndReportsJSON(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	if code := Run(context.Background(), []string{"storage", "x", "--force"}, &out, &diagnostics); code != 2 {
+		t.Fatalf("storage accepted --force: exit %d %s%s", code, out.String(), diagnostics.String())
+	}
+	out.Reset()
+	diagnostics.Reset()
+	if code := Run(context.Background(), []string{"storage", "--json"}, &out, &diagnostics); code != 2 {
+		t.Fatalf("storage without a lane name: exit %d %s", code, out.String())
+	}
+	var response struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Error == nil {
+		t.Fatalf("not a JSON error: %v %s", err, out.String())
+	}
+	var help bytes.Buffer
+	Run(context.Background(), []string{"--help"}, &help, io.Discard)
+	if !bytes.Contains(help.Bytes(), []byte("workcopy storage NAME")) {
+		t.Fatal("help does not list the storage command")
+	}
+}

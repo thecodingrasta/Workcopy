@@ -51,7 +51,7 @@ func TestSourceRootAcceptsLFAndCRLFModuleDeclarations(t *testing.T) {
 	for _, ending := range []string{"\n", "\r\n"} {
 		t.Run(fmtEnding(ending), func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			if err := os.WriteFile("go.mod", []byte("module workcopy"+ending+ending+"go 1.25"+ending), 0600); err != nil {
+			if err := os.WriteFile("go.mod", []byte("module workcopy"+ending+ending+"go 1.27"+ending), 0600); err != nil {
 				t.Fatal(err)
 			}
 			err := run(context.Background(), []string{"unknown"})

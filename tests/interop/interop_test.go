@@ -272,12 +272,30 @@ func TestLinuxBuildInWSLOnAWindowsRepository(t *testing.T) {
 		t.Fatalf("a bad WORKCOPY_GIT must fail closed: %d %s", code, out)
 	}
 
-	// 6. Foreign paths get the actionable message from each build.
-	if out, _, code = run(t, windowsBinary, nil, repo.Path, "list", "--repo", linuxRepo, "--json"); code != 2 || !strings.Contains(out, "posix-path-on-windows") {
-		t.Fatalf("the Windows build given a /mnt path: %d %s", code, out)
+	// 6. Each build accepts the other platform's spelling of a path it can reach,
+	// answers in the spelling it was given, and refuses what it cannot reach with
+	// the reason.
+	winLanes := filepath.Join(repo.Parent, "win-lanes")
+	out, _, code = run(t, windowsBinary, nil, repo.Path, "list", "--repo", linuxRepo, "--root", toLinux(winLanes), "--json")
+	if listed := decode(t, out); code != 0 || len(listed.Workspaces) != 1 || listed.Workspaces[0].Path != toLinux(windowsLane) {
+		t.Fatalf("the Windows build given /mnt paths must list the lane and answer in /mnt form (%s): %d %s", toLinux(windowsLane), code, out)
 	}
-	if out, code = linux("list", "--repo", repo.Path, "--json"); code != 2 || !strings.Contains(out, "windows-path-on-posix") {
-		t.Fatalf("the Linux build given a C:\\ path: %d %s", code, out)
+	out, _, code = run(t, windowsBinary, nil, repo.Path, "list", "--repo", linuxRepo, "--root", winLanes, "--json")
+	if listed := decode(t, out); code != 0 || len(listed.Workspaces) != 1 || listed.Workspaces[0].Path != toLinux(windowsLane) {
+		t.Fatalf("a repo given as /mnt with a root given as C:\\ is one call in two spellings; the foreign form wins, so the answer is /mnt: %d %s", code, out)
+	}
+	if out, _, code = run(t, windowsBinary, nil, repo.Path, "list", "--repo", "/tmp/not-on-a-drive", "--json"); code != 2 || !strings.Contains(out, "wsl-path-unreachable") {
+		t.Fatalf("the Windows build given a path inside the Linux filesystem: %d %s", code, out)
+	}
+	out, code = linux("list", "--repo", repo.Path, "--root", filepath.Join(repo.Parent, "linux-lanes"), "--json")
+	if listed := decode(t, out); code != 0 || len(listed.Workspaces) != 1 || !strings.EqualFold(listed.Workspaces[0].Path, filepath.Join(repo.Parent, "linux-lanes", "lx")) {
+		t.Fatalf("the Linux build given C:\\ paths must list the lane and answer in C:\\ form: %d %s", code, out)
+	}
+	if out, code = linux("list", "--repo", `\\server\share\repo`, "--json"); code != 2 || !strings.Contains(out, "windows-path-on-posix") {
+		t.Fatalf("the Linux build given a network share: %d %s", code, out)
+	}
+	if out, code = linux("list", "--repo", linuxRepo, "--root", linuxRoot, "--path-style", "windows", "--json"); code != 0 || !strings.Contains(out, strings.ReplaceAll(filepath.Join(repo.Parent, "linux-lanes"), `\`, `\\`)) {
+		t.Fatalf("--path-style windows must force C:\\ answers for /mnt input: %d %s", code, out)
 	}
 }
 
@@ -331,6 +349,11 @@ func TestWindowsBuildFromInsideWSL(t *testing.T) {
 	git("config", "user.name", "Interop")
 	git("config", "user.email", "interop@example.invalid")
 	git("config", "core.autocrlf", "false")
+	git("config", "core.fsmonitor", "false")
+	git("config", "gc.auto", "0")
+	git("config", "gc.autoDetach", "false")
+	git("config", "maintenance.auto", "false")
+	git("config", "maintenance.autoDetach", "false")
 	write := func(name, body string) {
 		full := filepath.Join(repo, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
@@ -362,11 +385,29 @@ func TestWindowsBuildFromInsideWSL(t *testing.T) {
 	// WSLENV forwards the variable to the Windows process, translating the path.
 	env := []string{"WSLENV=WORKCOPY_SETTINGS/p", "WORKCOPY_SETTINGS=" + filepath.Join(temp, "empty.env")}
 
-	// A POSIX path to the .exe is the WC-012 trap; Windows paths work.
-	if out, code := exeIn(env, "list", "--repo", repo, "--json"); code != 2 || !strings.Contains(out, "posix-path-on-windows") {
-		t.Fatalf("a /mnt path given to the .exe: %d %s", code, out)
+	// WC-022: the /mnt/<drive> spelling an agent in WSL already has is accepted
+	// as it is, no wslpath needed, and answered in kind.
+	// wslpath may return a second mount of the drive (an extra drvfs mount is
+	// common), which the Windows build cannot know; the conventional /mnt/<drive>
+	// spelling is what an agent in a default WSL has, so build that one.
+	conventional := func(path string) string {
+		windows := wslpath("-w", path)
+		return "/mnt/" + strings.ToLower(windows[:1]) + strings.ReplaceAll(windows[2:], `\`, "/")
 	}
-	out, code := exeIn(env, "create", "l1", "--all", "--repo", winRepo, "--root", winRoot, "--json")
+	out, code := exeIn(env, "create", "l0", "--all", "--repo", conventional(repo), "--root", conventional(filepath.Join(temp, "lanes0")), "--json")
+	if code != 0 {
+		t.Fatalf("create with /mnt paths through interop: %d %s", code, out)
+	}
+	if got, want := decode(t, out).Workspace.Path, conventional(filepath.Join(temp, "lanes0"))+"/l0"; got != want {
+		t.Fatalf("the lane must be reported as the /mnt path it was asked for: %q, want %q", got, want)
+	}
+	if _, err = os.Stat(filepath.Join(temp, "lanes0", "l0", "src", "Big.cs")); err != nil {
+		t.Fatalf("the lane must be reachable at the reported path: %v", err)
+	}
+	if out, code = exeIn(env, "list", "--repo", "/tmp/not-on-a-drive", "--json"); code != 2 || !strings.Contains(out, "wsl-path-unreachable") {
+		t.Fatalf("a path in the Linux filesystem cannot be opened by the .exe: %d %s", code, out)
+	}
+	out, code = exeIn(env, "create", "l1", "--all", "--repo", winRepo, "--root", winRoot, "--json")
 	if code != 0 {
 		t.Fatalf("create through interop: %d %s", code, out)
 	}

@@ -10,7 +10,7 @@ Workcopy runs natively on Windows, Linux and macOS. Under WSL there are two ways
 | Repository | Lanes | Program | Speed | Windows tools see the lanes | Notes |
 | --- | --- | --- | --- | --- | --- |
 | WSL filesystem (`~/src`) | beside it | Linux `workcopy` | fastest | no (only through `\\wsl$`) | Recommended when the agent runs in WSL. Nothing is shared with Windows Git. |
-| Windows drive | Windows drive | Windows `workcopy.exe`, called with Windows paths | fast (native NTFS) | yes | Recommended when Visual Studio or other Windows tools must open the lanes. |
+| Windows drive | Windows drive | Windows `workcopy.exe`, called with Windows or `/mnt/c` paths | fast (native NTFS) | yes | Recommended when Visual Studio or other Windows tools must open the lanes. |
 | Windows drive (`/mnt/c`) | Linux directory (`WORKCOPY_ROOT`) | Linux `workcopy` | fast | no | Good compromise. The review worktree is still registered in the Windows checkout (see below). |
 | Windows drive (`/mnt/c`) | `/mnt/c` | Linux `workcopy` | **10 to 20 times slower** | yes | Works, but only for small repositories or patience. `workcopy doctor` and `workcopy create` warn about it. |
 
@@ -43,8 +43,26 @@ These apply whenever the Linux build works on a checkout that Windows Git also u
 - **Review worktrees look broken to Windows Git.** The Linux build registers the review worktree with Linux paths, so `git worktree list` run by Windows Git marks it `prunable`, and a Windows `git gc` or `git worktree prune` can drop its metadata. The commit objects are safe; the worktree registration is not. The review made by `workcopy.exe` is healthy for Windows Git. `workcopy doctor` warns about this combination.
 - **A symlink made by `share` is unreadable from Windows.** Windows programs cannot follow a Linux symlink that targets a Linux path.
 - **File modes can lie.** Without the `metadata` mount option, `/mnt/c` reports every file as executable. Workcopy detects this when a lane is created, ignores the false execute bits and repairs lanes made by v0.1.3. It cannot know a script's real mode on such a mount.
-- **Paths do not cross.** Passing `/mnt/c/...` to the Windows build, or `C:\...` to the Linux build, is rejected with the form to use. Convert with `wslpath -w` and `wslpath -u`.
+- **Path spelling is handled for you.** See [path forms](#path-forms).
 - **Line endings come from the Git that runs.** Under WSL the Linux Git's `core.autocrlf` and `core.eol` apply, not Windows Git's. `workcopy doctor` prints what is in effect.
+
+## Path forms
+
+A Windows checkout has two names under WSL: `C:\work\repo` from Windows and `/mnt/c/work/repo` from Linux. Workcopy accepts both, in every flag, every setting and every MCP argument, so an agent in WSL can drive `workcopy.exe` with the `/mnt/c/...` paths it already has and no `wslpath` wrapper.
+
+| Build | Given | Result |
+| --- | --- | --- |
+| Windows `workcopy.exe` | `C:\work\repo` or `c:/work/repo` | used as is |
+| Windows `workcopy.exe` | `/mnt/c/work/repo` | read as `C:\work\repo` |
+| Windows `workcopy.exe` | `/home/me/repo` | refused, `wsl-path-unreachable`: Windows cannot open WSL's own filesystem. Use the Linux build for a repository there |
+| Linux `workcopy` in WSL | `C:\work\repo` or `C:/work/repo` | read as the drive's mount point (`/mnt/c/work/repo`, found from the kernel's mount table, so a moved `automount root` works) |
+| Linux `workcopy` in WSL | `\\wsl.localhost\<this distro>\home\me` | read as `/home/me` |
+| Linux or macOS outside WSL | `C:\work\repo` | refused, `windows-path-on-posix`: there is no such drive |
+| any | another distribution's or machine's share | refused with the reason |
+
+**Answers use the spelling you used.** A call that passed `/mnt/c/...` is answered with `/mnt/c/...` in lane paths, review paths, warnings and suggested commands; a call that passed `C:\...` is answered with `C:\...`. The choice belongs to the call, so two agents using different spellings on one server each read their own. Conflict content is data and is never rewritten. To force one spelling for everything, set `WORKCOPY_PATH_STYLE` (or `--path-style`) to `wsl`, `windows` or `native`. The Windows build assumes WSL's default mount root (`/mnt`); set `WORKCOPY_WSL_MOUNT_ROOT` if `/etc/wsl.conf` changed it. It can only know that one root: a second mount of a drive somewhere else (for example `/mnt/cnm`) is not a drive path to it, and is refused as `wsl-path-unreachable`. The Linux build reads the kernel's mount table and handles any mount of a drive.
+
+`workcopy path NAME` prints the lane directory alone, in the spelling you used, so a script on either side can `cd` into it.
 
 ## Setting it up
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -29,6 +30,8 @@ var digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // for concurrent use.
 type ObjectSource interface {
 	Read(objectID string) ([]byte, error)
+	// Stream writes a large object to w without holding it, and returns its length.
+	Stream(objectID string, w io.Writer) (int64, error)
 }
 
 type Store struct {
@@ -162,6 +165,13 @@ func (s *Store) collect(snapshot model.Snapshot) error {
 		return s.Root.Remove(stale[index])
 	})
 }
+
+// ReadVersion describes a lane file and returns its bytes.
+//
+// For a file above model.InlineFileBytes the version is complete (its hash and
+// size describe the raw bytes) but the returned body is nil: the file is hashed
+// as it streams and never held whole. Callers that need the bytes of such a
+// file must check version.Large() and stream it themselves.
 func ReadVersion(root *fsops.Root, name string, baseline model.FileVersion, respectMode bool) (model.FileVersion, []byte, error) {
 	version, body, _, err := readVersion(root, name, baseline, respectMode)
 	return version, body, err
@@ -190,15 +200,28 @@ func readVersion(root *fsops.Root, name string, baseline model.FileVersion, resp
 	if !info.Mode().IsRegular() {
 		return model.FileVersion{}, nil, false, model.Fail(3, "path-obstructed", "Expected a source file, found a directory or special file: "+name)
 	}
-	body, err := root.ReadRegular(name, info, model.MaxFileBytes)
-	if err != nil {
-		return model.FileVersion{}, nil, false, err
-	}
 	mode := uint32(0644)
 	if respectMode && runtime.GOOS != "windows" && info.Mode().Perm()&0111 != 0 {
 		mode = 0755
 	} else if !respectMode && baseline.Kind == model.Regular {
 		mode = baseline.Mode
+	}
+	if info.Size() > model.InlineFileBytes() {
+		// Large files are hashed as they stream and are never line-ending
+		// converted, so the version describes the raw bytes. The body is not
+		// returned: callers that need the bytes of a large file stream them.
+		if info.Size() > model.MaxFileBytes() {
+			return model.FileVersion{}, nil, false, model.Fail(3, "file-too-large", fmt.Sprintf("%s is %d bytes, over the %d MiB limit. Raise WORKCOPY_MAX_FILE_MIB in the settings file, or keep the file out of the lane's source (for example by ignoring it)", name, info.Size(), model.MaxFileBytes()>>20))
+		}
+		sum, size, hashErr := root.HashRegular(name, info)
+		if hashErr != nil {
+			return model.FileVersion{}, nil, false, hashErr
+		}
+		return model.FileVersion{Kind: model.Regular, Mode: mode, Hash: sum, Size: size}, nil, false, nil
+	}
+	body, err := root.ReadRegular(name, info, model.InlineFileBytes())
+	if err != nil {
+		return model.FileVersion{}, nil, false, err
 	}
 	// A text file is compared, hashed and merged in its stored (LF) form so a
 	// tool that rewrites line endings cannot create a change or a conflict.

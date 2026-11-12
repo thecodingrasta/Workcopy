@@ -11,13 +11,13 @@ This page records local evidence and the checks contributors can repeat. The CI 
 | Multiple repositories through one MCP | Three same-named lanes, per-call root override, current-directory bootstrap, concurrent offline Go tests and separate review receipts tested |
 | Windows checkout identity | Distinct Unicode checkout paths retain separate configuration and default storage; regression reproduced before correction |
 | Go, Node and .NET | Small selected-project fixtures built and tested in lanes; this does not certify arbitrary repositories |
-| Linux WSL / Debian, ext4 | Full suite with `-race` passed natively with Go 1.27.3 and Git 2.47.3 (lanes and repositories on the WSL filesystem), including the WSL side of the interop tests and both lane fixtures. The .NET fixture ran with SDK 10.0.402 plus the .NET 8 runtime it targets; the Node fixture ran with Node 22.23 (the version CI uses) and Node 24.22, both installed under the user's home directory with no system changes (see below) |
+| Linux WSL / Debian, ext4 | Full suite with `-race` passed natively with Go 1.27.4, Node 26.13.1 and .NET SDK 11.0.100 (lanes and repositories on the WSL filesystem), including the WSL side of the interop tests and both lane fixtures. The toolchains were installed under the user's home directory with no system changes. The drvfs run (repository and lanes on a Windows drive) passed except two tests that failed when the whole suite ran at once, while WSL's 2 GB swap was exhausted; a temporary-directory cleanup reported `cannot allocate memory`. Both tests passed when run alone |
 | Linux WSL / Debian, `/mnt/c` drvfs without metadata | The failing environment of WC-001/WC-004: every new file reports mode 777. v0.1.3 shows phantom modifications on almost every lane test; the current code passes the workspace, state, file-system, line-ending and Git suites with `-race` with repository and lanes both on that mount. Only the Debian instance was exercised, not Windows-side Git interop |
 | macOS | Cloud CI is the only evidence: `macos-latest` (Apple silicon) and `macos-15-intel` run the full gate on every push. Nothing in this pass was executed on a Mac, so macOS behaviour of the new line-ending, file-mode and parallel-I/O code is unconfirmed until those jobs have run |
 | Other architectures | Cross-compilation only unless a native runner explicitly executes the checks |
 | Case-only filename collision | Tested on every platform by writing the two paths straight into Git's object store, so the case-insensitive volume does not need to hold them; the refusal is exit 3 `case-collision` naming both paths |
 
-The clean-source Windows gate passed with Go 1.25.6, Git 2.45.1.windows.1 and MinGW-w64 GCC 15.2.0 with `libsynchronization.a` available. It included formatting, vet, race tests, the offline Node lane fixture, a native build and JSON CLI smoke checks. The selected .NET lane restore/build/test passed with SDK 10.0.401 and .NET 8 runtime 8.0.31. The repository now pins Go 1.27.3; Windows and Debian WSL scans with `govulncheck` v1.9.0 report no vulnerabilities under that toolchain. Older Go 1.27.2 installations must allow automatic toolchain selection or be upgraded before release packaging. CI's `1.25.x` job is an API-floor check, not a release-toolchain approval. A local pass does not imply a newly edited workflow has run on GitHub.
+The clean-source Windows gate passed with Go 1.27.4, Node 26.13.1, the .NET SDK 11.0.100, Git 2.56.0.windows.3 and the MinGW-w64 runtime needed for race detection. It included formatting, vet, race tests, the Node and .NET lane fixtures, a native build and JSON CLI smoke checks. `govulncheck` v1.9.0 reports no vulnerabilities under Go 1.27.4. Earlier, Go 1.27.3 reported a reachable standard-library vulnerability (GO-2026-6859), which is why the toolchain moved. A local pass does not show that a workflow has run on GitHub.
 
 Repeat the native gate with both lane fixtures enabled:
 
@@ -43,7 +43,7 @@ The .NET fixture restores pinned test packages into disposable storage. Obtain a
 | 1,200 files in nested directories; a path longer than Windows `MAX_PATH` | Scale and long-path handling |
 | Executable files and relative symbolic links (where the account can create links) | Mode and link preservation through a full lifecycle |
 
-The refusal tests check the exit code, the stable error code, that the message names the path and the way out, that nothing was created, and that the advertised workaround works: no commits, bare repository, not a repository, unknown branch; submodules, files over 64 MiB, 17 kinds of unportable path (reserved Windows names, `:`, `?`, `*`, `<`, `|`, trailing dot or space, `.git` and `.workcopy` components, backslashes), case-only collisions, eight kinds of unsafe symbolic link, canonically equivalent Unicode names, lane names that try to escape the root or are reserved, case-variant lane names, symbolic links on an account that cannot create them, and a missing Git identity (including that the same receipt commits once an identity is supplied through the environment). The same codes are checked over MCP.
+The refusal tests check the exit code, the stable error code, that the message names the path and the way out, that nothing was created, and that the advertised workaround works: no commits, bare repository, not a repository, unknown branch; submodules, files over the configured size limit, 17 kinds of unportable path (reserved Windows names, `:`, `?`, `*`, `<`, `|`, trailing dot or space, `.git` and `.workcopy` components, backslashes), case-only collisions, eight kinds of unsafe symbolic link, canonically equivalent Unicode names, lane names that try to escape the root or are reserved, case-variant lane names, symbolic links on an account that cannot create them, and a missing Git identity (including that the same receipt commits once an identity is supplied through the environment). The same codes are checked over MCP.
 
 Each fix was also checked by removing it and confirming the matching test fails.
 
@@ -75,18 +75,47 @@ CI installs the toolchains with `actions/setup-node` and `actions/setup-dotnet`.
 
 ```bash
 mkdir -p ~/tools && cd ~/tools
-# .NET SDK plus the 8.0 runtime the fixture targets (needs the libicu package your distribution ships)
+# .NET 11 SDK; the fixtures target net11.0 (needs the libicu package your distribution ships)
 curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh
-bash dotnet-install.sh --version 10.0.402 --install-dir ~/tools/dotnet --no-path
-bash dotnet-install.sh --runtime dotnet --channel 8.0 --install-dir ~/tools/dotnet --no-path
-# Node 22 from https://nodejs.org/dist/ (linux-x64 tarball), unpacked to ~/tools/node22
-export PATH=$HOME/tools/node22/bin:$HOME/tools/dotnet:$PATH DOTNET_ROOT=$HOME/tools/dotnet
+bash dotnet-install.sh --version 11.0.100 --install-dir ~/tools/dotnet --no-path
+# Node 26.13.1 (current LTS) from https://nodejs.org/dist/ (linux-x64 tarball), unpacked to ~/tools/node26
+export PATH=$HOME/tools/node26/bin:$HOME/tools/dotnet:$PATH DOTNET_ROOT=$HOME/tools/dotnet
 WORKCOPY_DOTNET_LANE_ACCEPTANCE=1 WORKCOPY_NODE_LANE_ACCEPTANCE=1 go test ./tests/acceptance -run 'TestSelectedDotNet|TestSelectedNode' -count=1 -v
 ```
 
 The .NET fixture restores pinned packages from NuGet, so it needs network access. On Debian the SDK fails to start without ICU (`Couldn''t find a valid ICU package`); install `libicu-dev` rather than switching globalization off, so the test matches a real setup. The fixture targets `net8.0`: with only the 10.0 runtime installed, `dotnet test` fails with "You must install or update .NET to run this application", which is a missing runtime, not a Workcopy fault.
 
 If the `TEMP` directory of the machine running the tests lies inside a Git checkout, every lane root is refused as `workspace-inside-repository`. That is Workcopy's safety rule working; point `TEMP` or `TMPDIR` at a directory outside any repository.
+## Daily use: the second work report
+
+Evidence for the fixes to WC-016 to WC-022 and for several repositories in use at once. Native runs on one Windows host (Go 1.27.3, Git 2.56 for Windows, Defender real-time protection on) and one WSL 2 Debian distribution on the same machine. macOS was not run by the author; it is covered only by the hosted runners in the [CI gates](#ci-gates).
+
+| What | How it was checked |
+| --- | --- |
+| Interrupted `create` in an `eol=crlf` repository recovers (WC-018, WC-019) | The real binary is killed at proportional points during `create`, `sync` and `destroy` (`tests/acceptance/kill_matrix_test.go`); `recover` must finish with the same bytes and no `.workcopy-tmp-*` file left or reported. Removing the fix reproduces the reported `file-changed` |
+| A deadline reports `cancelled` (WC-020) | Engine test cuts `create` after 1, 64 and 256 operations and a deadline; no OS error text may appear in the message, the cancellation must satisfy `errors.Is`, and `recover` must complete each lane |
+| Files over 64 MiB (WC-017) | Real-size files through the shipped executable: nine 82,100,244-byte files in a discard path and a 70 MiB tracked asset through create, edit, status, sync, review, commit and destroy; the hard limit and its setting are tested at their boundaries. With the fix removed, `destroy` fails with exit 5 exactly as reported |
+| Long review paths (WC-016) | A real `git.exe` reproduces the "Filename too long" listing with `core.longpaths` off and shows Workcopy's own Git is unaffected; the warning text is checked in `merge` and `doctor` |
+| Plan size (WC-021) | 4,160-file dry run: 347 characters of JSON by default, 262,423 with `--include-files` |
+| Paths from both platforms (WC-022) | 24 translation cases and the mount-table parser as unit tests; `tests/interop` drives the Windows build from inside WSL with `/mnt/c/...` paths and no `wslpath` (answers come back as `/mnt/c/...`), and the Linux build inside WSL with `C:\...` paths (answers come back as `C:\...`), against a repository on NTFS |
+| Several repositories at once | Four repositories with three lanes each created by parallel processes; same lane names in different repositories; per-repository lane root and owner configuration from `.git/workcopy.env`, for the CLI and for MCP calls; one root shared by two repositories; two projects with two lanes each built and tested concurrently with their own toolchain output, `status` seeing only source edits and `destroy` needing no `--force` for build output |
+
+A realistic loop on a synthetic repository of 4,125 tracked files with CRLF sources (`*.cs text eol=crlf`), one .NET project built with `dotnet build` inside the lane, and ten generated build files over 64 MiB, with the Windows build on NTFS and Defender on. Single run, seconds:
+
+| Step | Seconds |
+| --- | --- |
+| `create --all` | 9 to 11 |
+| `share` (junction to a dependency directory) | 0.5 |
+| `dotnet build` in the lane, directory taken from `workcopy path` | 3.3 |
+| `status` (two edited sources, about 900 MB of ignored build output present) | 5.0 |
+| `merge` (review) | 14.9 |
+| `destroy --force` of an edited lane | 5.3 |
+| `destroy`, no `--force`, clean lane carrying the ten files over 64 MiB | 13.7 |
+
+An edited lane is refused by plain `destroy` (exit 3, naming the edited source files only) and the review is kept. These numbers are one machine on one day: use them for order of magnitude, not as a promise.
+
+Not checked: macOS at all by the author; Windows symbolic-link behaviour (the account here cannot create links); the reporter's own repository and scripts, which were not available here; a repository of 100,000 files; a Windows runner with a different Defender policy. On WSL drvfs the long end-to-end tests exceed a minute per command under load and occasionally lose a directory rename to Windows (`permission denied`, recoverable); they pass when run alone.
+
 ## Measured performance
 
 `internal/workspace/lifecycle_bench_test.go` times create, status and review on a synthetic repository (`WORKCOPY_BENCH_FILES=4000 go test ./internal/workspace -run '^$' -bench LaneLifecycle -benchtime=1x`, with `TEMP`/`TMPDIR` pointing at the filesystem under test). Files are about 15 KB. All figures are single runs on one development machine with real-time antivirus on Windows. They show direction, not a benchmark suite.
@@ -140,13 +169,13 @@ The Windows `workcopy.exe` remains the right tool when Windows programs must ope
 - **Windows Git versus Linux Git** (`tests/interop`, needs a machine with WSL). Both directions pass here: the Linux build and Linux Git driving a repository on a Windows drive next to the Windows build, and `workcopy.exe` driven from inside WSL with Windows paths. They check that both builds write identical bytes for attribute-fixed files, that a review made by Linux Git is reported `prunable` by Windows Git (the documented limitation, reproduced) and that `doctor` warns about it, that a review made by `workcopy.exe` is healthy for Windows Git, `WORKCOPY_GIT`, and the foreign-path messages. Hosted CI runners have no WSL, so these skip there.
 - **Agent selection and configuration opt-in** are tested at four levels: the client-name table and selection precedence (`internal/agents`), the planner with negative cases for every refusal tier (`internal/agentctx`), lanes built by the engine for each tool including switching, legacy lanes and the destroy/review/commit contract (`internal/workspace`), real MCP sessions that announce `claude-code`, `codex-mcp-client`, `gemini-cli-mcp-client`, `Kiro CLI`, `opencode` and an unknown client (`internal/mcpserver`), and the real binary with the settings file and `--agent` (`tests/acceptance`). Each guard was also checked by breaking the code it protects and confirming a test fails. MCP tool schemas are checked to offer no argument that would let an agent widen what is copied.
 - **Every command and tool is exercised.** The acceptance package reads the command list from the binary's own help and fails if any command was not run through the real executable. The MCP package asks the server for its tool list and fails if any tool was not called. Both checks run on every full test run on every platform.
-- **.NET and Node** lane fixtures (real NuGet restore, .NET SDK 10.0.402; Node 24.19) pass with the opt-in variables set; CI runs them on Linux, Windows and both macOS architectures.
+- **.NET and Node** lane fixtures (.NET SDK 11.0.100 targeting net11.0; Node 26.13.1 with npm 12.2.2 declared) pass on Windows and WSL with the opt-in variables set. CI runs them on Linux, Windows and both macOS architectures; macOS was not run here.
 - **Properties:** the line-ending converter is checked byte for byte against `git checkout` (2,720 cases) and by a round-trip fuzz target (4.3 million executions without failure); the settings parser has a fuzz target; the worker pool is checked sequentially and in parallel; six concurrent processes share one root and repository without corruption.
 ## CI gates
 
 `.github/workflows/ci.yml` runs:
 
-- Go 1.25 API floor and current stable Go on Linux (x86-64 and arm64), Windows (x86-64) and macOS (Apple silicon and x86-64): formatting, vet, race tests, real CLI/MCP journeys, build and diagnostics.
+- Go 1.27.4 on Linux (x86-64 and arm64), Windows (x86-64) and macOS (Apple silicon and x86-64): formatting, vet, race tests, real CLI/MCP journeys, build and diagnostics.
 - A Linux job that loop-mounts a FAT volume reporting every file as executable (the WSL drvfs symptom, checked by the job itself before it relies on it) and runs the lane, review, commit and cleanup test on it, then runs the state and workspace suites with `WORKCOPY_IO_WORKERS=1` to show the worker pool changes no result. Hosted runners have no WSL, so path-direction and drive-warning logic is covered by unit tests instead.
 - Explicit selected .NET restore/build/test and offline Node script fixtures on all three operating systems.
 - Current vulnerability database scanning. Scanner/network errors fail the job.

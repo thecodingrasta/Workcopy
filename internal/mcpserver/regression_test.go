@@ -182,23 +182,26 @@ func TestMissingLaneIsVisibleAndClearableOverMCP(t *testing.T) {
 	}
 }
 
-// WC-012 / WC-002 / WC-006 over MCP: the foreign-path hint and the doctor
-// report are reachable by an agent.
+// WC-012 / WC-002 / WC-006 over MCP: a path that cannot exist on this platform is
+// refused with a message that names the fix, and the doctor report is reachable
+// by an agent. (WC-022: the other platform's spelling of a path that can exist
+// is accepted; TestWSLSpellingIsAcceptedAndAnsweredInKind covers that.)
 func TestForeignPathsAndDoctorOverMCP(t *testing.T) {
 	session, _, _ := connect(t, Options{})
-	foreign, code := "/mnt/c/Users/me/repo", "posix-path-on-windows"
+	unreachable, code := "/home/me/repo", "wsl-path-unreachable"
 	if runtime.GOOS != "windows" {
-		foreign, code = `C:\Users\me\repo`, "windows-path-on-posix"
+		// A UNC share is refused outside WSL and inside it alike, unlike C:\ which
+		// WSL can reach through its drive mount.
+		unreachable, code = `\\server\share\repo`, "windows-path-on-posix"
 	}
-	out := call(t, session, "bootstrap", Bootstrap{Directory: foreign})
-	if out.ExitCode != 2 || out.Error == nil || out.Error.Message == "" || !strings.Contains(out.Error.Message, "path") {
-		t.Fatalf("a foreign directory must be rejected with a usable message: %+v", out)
+	out := call(t, session, "bootstrap", Bootstrap{Directory: unreachable})
+	if out.ExitCode != 2 || out.Error == nil || out.Error.Code != code || !strings.Contains(out.Error.Message, "path") {
+		t.Fatalf("an unreachable directory must be rejected with %s and a usable message: %+v", code, out.Error)
 	}
-	scoped := call(t, session, "status", Lane{Name: "x", Scope: Scope{Repo: foreign}})
-	if scoped.ExitCode != 2 {
-		t.Fatalf("a foreign repo scope must be rejected: %+v", scoped)
+	scoped := call(t, session, "status", Lane{Name: "x", Scope: Scope{Repo: unreachable}})
+	if scoped.ExitCode != 2 || scoped.Error == nil || scoped.Error.Code != code {
+		t.Fatalf("an unreachable repo scope must be rejected with %s: %+v", code, scoped.Error)
 	}
-	_ = code
 
 	doctor := call(t, session, "doctor", Empty{})
 	if doctor.ExitCode != 0 {
@@ -248,5 +251,49 @@ func TestCommandReadsThePersistentSettings(t *testing.T) {
 	}
 	if code, _ := start("WORKCOPY_ALLOW_SHARE_TARGET="+r.Parent+";"+r.Path+"\n", nil); code != 0 {
 		t.Fatal("share targets can be listed in the file")
+	}
+}
+
+// workcopy_storage is a read-only report: it returns the ledger for a real lane,
+// reports a missing lane as an ordinary failure, and changes nothing.
+func TestStorageToolReportsALaneAndIsReadOnly(t *testing.T) {
+	session, _, _ := connect(t, Options{})
+	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	if created.ExitCode != 0 {
+		t.Fatal(created)
+	}
+	lane := created.Report.Workspace.Path
+	output := filepath.Join(lane, "A", "bin", "A.dll")
+	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, make([]byte, 30000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	generation := created.Report.Generation
+
+	out := call(t, session, "storage", Lane{Name: "one"})
+	if out.ExitCode != 0 || out.Report == nil || out.Report.Storage == nil {
+		t.Fatalf("storage: %+v", out)
+	}
+	detail := out.Report.Storage
+	likely := detail.Account.Classes["likely-output"]
+	if likely == nil || likely.Files != 1 || likely.LogicalBytes != 30000 || likely.ReclaimableBytes == 0 {
+		t.Fatalf("likely-output row wrong: %+v", detail.Account.Classes)
+	}
+	if detail.Volume.FileSystem == "" || detail.Volume.ID == "" {
+		t.Fatalf("volume not described: %+v", detail.Volume)
+	}
+	if !strings.Contains(out.Report.Message, "Read-only") || !strings.Contains(out.Report.Message, "reclaimable") {
+		t.Fatalf("message: %s", out.Report.Message)
+	}
+	if data, err := os.ReadFile(output); err != nil || len(data) != 30000 {
+		t.Fatalf("the measured file changed: %d bytes, %v", len(data), err)
+	}
+	if status := call(t, session, "status", Lane{Name: "one"}); status.Report.Generation != generation {
+		t.Fatalf("generation moved from %d to %d", generation, status.Report.Generation)
+	}
+	if missing := call(t, session, "storage", Lane{Name: "nope"}); missing.ExitCode == 0 || missing.Error == nil {
+		t.Fatalf("a missing lane must fail: %+v", missing)
 	}
 }

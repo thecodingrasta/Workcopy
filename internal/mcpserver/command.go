@@ -41,10 +41,18 @@ func Command(ctx context.Context, args []string, version string, stdin io.ReadCl
 		return 2
 	}
 	// Only flags actually given override the settings file and environment.
+	// Without --repo, --root is the parent under which each repository gets its
+	// own directory, so it must not hide a repository's own settings file. It is
+	// applied after resolution instead, as the parent default.
+	repoGiven := flags.Lookup("repo").Value.String() != ""
+	explicitRoot := *root
 	given := map[string][]string{}
 	flags.Visit(func(f *flag.Flag) {
 		for _, d := range settings.Definitions {
 			if d.Flag == f.Name {
+				if f.Name == "root" && !repoGiven {
+					continue
+				}
 				if f.Name == "allow-share-target" {
 					given[d.Key] = rawTargets
 				} else {
@@ -63,6 +71,9 @@ func Command(ctx context.Context, args []string, version string, stdin io.ReadCl
 		return 2
 	}
 	*repo, *root, *config = resolved.String(settings.Repo), resolved.String(settings.Root), resolved.String(settings.Config)
+	if !repoGiven && explicitRoot != "" {
+		*root = explicitRoot
+	}
 	*maxLanes, *reserve, *timeout = resolved.Int(settings.MaxLanes), uint64(resolved.Int(settings.ReserveMiB)), resolved.Duration(settings.ToolTimeout)
 	var targets []string
 	for _, value := range resolved.List(settings.AllowShareTarget) {
@@ -94,6 +105,28 @@ func Command(ctx context.Context, args []string, version string, stdin io.ReadCl
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 3
+		}
+		if layered, layerErr := projectSettings(resolved, engine.Repository.CommonDir); layerErr != nil {
+			fmt.Fprintln(stderr, "MCP settings:", layerErr)
+			return 2
+		} else if layered != resolved {
+			// The repository's own lane root and owner configuration apply unless
+			// a flag or environment variable already chose.
+			resolved = layered
+			if err = resolved.ExportProcessEnvironment(os.LookupEnv, os.Setenv); err != nil {
+				fmt.Fprintln(stderr, "MCP settings:", err)
+				return 2
+			}
+			if resolved.Entry(settings.Root).Source == "project" {
+				*root = resolved.String(settings.Root)
+				if engine, err = workspace.New(ctx, *repo, *root); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 3
+				}
+			}
+			if resolved.Entry(settings.Config).Source == "project" {
+				*config = resolved.String(settings.Config)
+			}
 		}
 		engine.Settings = resolved
 	}

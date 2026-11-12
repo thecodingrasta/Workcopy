@@ -76,7 +76,7 @@ func TestSelectedNodeWorkspaceBuildsAndTestsInsideLane(t *testing.T) {
 	}
 	r := testutil.NewRepository(t)
 	r.Write(".gitignore", ".lane-build/\n")
-	r.Write("package.json", `{"private":true,"packageManager":"npm@10.3.0","workspaces":["packages/*"]}`)
+	r.Write("package.json", `{"private":true,"packageManager":"npm@12.2.2","workspaces":["packages/*"]}`)
 	r.Write("package-lock.json", `{"name":"offline-fixture","lockfileVersion":3,"requires":true,"packages":{}}`)
 	r.Write(".workcopy.json", `{"schemaVersion":1,"projects":[{"id":"app","path":"packages/app","dependencies":["core"]},{"id":"core","path":"packages/core"},{"id":"excluded","path":"packages/excluded"}],"profiles":{"daily":{"projects":["app"],"include":["package.json","package-lock.json",".gitignore"],"dependencyClosure":"include"}}}`)
 	r.Write("packages/core/package.json", `{"name":"@fixture/core","version":"1.0.0","type":"module"}`)

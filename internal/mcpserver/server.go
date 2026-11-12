@@ -142,23 +142,30 @@ type Share struct {
 	TrustShared        bool   `json:"trustShared" jsonschema:"Explicit consent to writable cooperative sharing"`
 }
 
+// readOwnerConfig reads the owner-supplied selection configuration once, so a
+// tool call cannot change what the owner approved by editing it afterwards.
+func readOwnerConfig(path string) (string, []byte, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return path, nil, err
+	}
+	absolute = filepath.Clean(absolute)
+	root, err := fsops.OpenRoot(filepath.Dir(absolute))
+	if err != nil {
+		return absolute, nil, err
+	}
+	defer root.Close()
+	data, err := root.ReadFileLimit(filepath.Base(absolute), 1<<20)
+	if data == nil {
+		data = []byte{}
+	}
+	return absolute, data, err
+}
+
 func New(engine *workspace.Engine, version string, opts Options) *Server {
 	s := &Server{engine: engine, opts: opts}
 	if opts.ConfigPath != "" {
-		absolute, err := filepath.Abs(opts.ConfigPath)
-		if err == nil {
-			s.opts.ConfigPath = filepath.Clean(absolute)
-			var root *fsops.Root
-			root, err = fsops.OpenRoot(filepath.Dir(absolute))
-			if err == nil {
-				s.configData, err = root.ReadFileLimit(filepath.Base(absolute), 1<<20)
-				_ = root.Close()
-				if s.configData == nil {
-					s.configData = []byte{}
-				}
-			}
-		}
-		s.configErr = err
+		s.opts.ConfigPath, s.configData, s.configErr = readOwnerConfig(opts.ConfigPath)
 	}
 	s.protocol = mcp.NewServer(&mcp.Implementation{Name: "workcopy", Version: version}, &mcp.ServerOptions{Instructions: Instructions, Capabilities: &mcp.ServerCapabilities{}, PageSize: 100})
 	add(s, "doctor", "Report runtime, Git program, line-ending settings and filesystem warnings (for example a repository on a WSL Windows drive) without changing the repository or running scripts.", true, func(ctx context.Context, s *Server, in Empty) (Output, error) {
@@ -171,7 +178,11 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 	})
 	add(s, "bootstrap", "Start here: pass repo or your current directory. Identify an existing lane or discover a checkout, build inputs and storage headroom. Does not run builds or restores.", true, func(ctx context.Context, s *Server, in Bootstrap) (Output, error) {
 		if in.Directory != "" {
-			if manifest, err := workspace.Locate(in.Directory); err == nil {
+			directory, err := fsops.NormalizeInput(ctx, in.Directory)
+			if err != nil {
+				return s.result(workspace.Report{}, err, in.Page), nil
+			}
+			if manifest, err := workspace.Locate(directory); err == nil {
 				return s.laneContext(ctx, Lane{Name: manifest.Name, Page: in.Page})
 			}
 		}
@@ -188,6 +199,10 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 	add(s, "lane_context", "Confirm lane identity, selection, instructions, build inputs and validation candidates. Never executes repository code.", true, func(ctx context.Context, s *Server, in Lane) (Output, error) { return s.laneContext(ctx, in) })
 	add(s, "status", "Inspect source changes, generation and durable conflict tokens. Clean source status is not build success or integration.", true, func(ctx context.Context, s *Server, in Lane) (Output, error) {
 		r, e := s.engine.Status(ctx, in.Name)
+		return s.result(r, e, in.Page), nil
+	})
+	add(s, "storage", "Measure a lane's disk cost by file identity (hard links counted once): source, likely build output, bytes shared with files outside the lane, volume capabilities. Read-only point-in-time estimate; not a quota and not build output outside the lane.", true, func(ctx context.Context, s *Server, in Lane) (Output, error) {
+		r, e := s.engine.Storage(ctx, in.Name)
 		return s.result(r, e, in.Page), nil
 	})
 	add(s, "create", "Create a uniquely named Git-free lane from committed source. Explicit projects or profile required. Preview before apply; storage admission may block.", false, func(ctx context.Context, s *Server, in Create) (Output, error) {
@@ -254,9 +269,14 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		return s.result(r, e, in.Page), nil
 	})
 	add(s, "share", "Create a writable dependency link only to an owner-allowlisted target, with explicit trust and environment identity. Not read-only isolation.", false, func(ctx context.Context, s *Server, in Share) (Output, error) {
+		native, err := fsops.NormalizeInput(ctx, in.Target)
+		if err != nil {
+			return s.result(workspace.Report{}, err, in.Page), nil
+		}
+		in.Target = native
 		allowed := false
 		for _, target := range s.opts.ShareTargets {
-			if filepath.Clean(in.Target) == target {
+			if filepath.Clean(native) == target {
 				allowed = true
 				break
 			}
@@ -300,7 +320,7 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 
 func add[I any](s *Server, name, description string, readOnly bool, handler func(context.Context, *Server, I) (Output, error)) {
 	closed := false
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "workcopy_" + name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &closed}}, func(ctx context.Context, request *mcp.CallToolRequest, in I) (*mcp.CallToolResult, Output, error) {
+	call := func(ctx context.Context, request *mcp.CallToolRequest, in I) (*mcp.CallToolResult, Output, error) {
 		// Validate common pagination before any mutation.
 		body, _ := json.Marshal(in)
 		var page Page
@@ -336,7 +356,7 @@ func add[I any](s *Server, name, description string, readOnly bool, handler func
 			_ = json.Unmarshal(body, &input)
 			if input.Directory != "" {
 				var err error
-				scope, err = directoryScope(input.Directory, scope)
+				scope, err = directoryScope(ctx, input.Directory, scope)
 				if err != nil {
 					return &mcp.CallToolResult{IsError: true}, s.result(workspace.Report{}, err, page), nil
 				}
@@ -367,7 +387,39 @@ func add[I any](s *Server, name, description string, readOnly bool, handler func
 			out.Scope = &Scope{Repo: selected.engine.Repository.Root, Root: selected.engine.WorkRoot}
 		}
 		return &mcp.CallToolResult{IsError: out.ExitCode != 0 && out.ExitCode != 4}, out, nil
+	}
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "workcopy_" + name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &closed}}, func(ctx context.Context, request *mcp.CallToolRequest, in I) (*mcp.CallToolResult, Output, error) {
+		// One recorder per call remembers whether the caller wrote paths as
+		// C:\... or /mnt/c/..., and the answer is written the same way.
+		ctx, _ = fsops.WithRecorder(ctx)
+		result, out, err := call(ctx, request, in)
+		return result, s.renderOutput(ctx, out), err
 	})
+}
+
+// renderOutput writes the paths in a tool result in the form the caller used. Base64
+// conflict content is the caller's data and is never rewritten.
+func (s *Server) renderOutput(ctx context.Context, out Output) Output {
+	setting := ""
+	if s.opts.Settings != nil {
+		setting = s.opts.Settings.String(settings.PathStyle)
+	}
+	form := fsops.StyleFor(ctx, setting)
+	if form == fsops.FormNative {
+		return out
+	}
+	var content *workspace.Content
+	if out.Report != nil {
+		content = out.Report.Content
+		report := *out.Report
+		report.Content = nil
+		out.Report = &report
+	}
+	out = fsops.RenderCopy(out, form)
+	if out.Report != nil {
+		out.Report.Content = content
+	}
+	return out
 }
 
 func (s *Server) result(report workspace.Report, err error, page Page) Output {

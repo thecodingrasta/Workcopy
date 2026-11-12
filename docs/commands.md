@@ -11,6 +11,7 @@ Run `workcopy --help` for syntax. Flags can appear before or after positional ar
 | `--repo DIRECTORY` | Original Git checkout or linked Git worktree |
 | `--root DIRECTORY` | Workspace storage outside every Git checkout; `--work-root` is an alias |
 | `--workspace DIRECTORY` | Read an existing lane's recorded context |
+| `--path-style STYLE` | How paths are written in the answer: `auto` (the form you used), `native`, `wsl` (`/mnt/c/...`) or `windows` (`C:\...`). Also `WORKCOPY_PATH_STYLE`; see [paths](wsl.md#path-forms) |
 | `--name NAME` | Explicit lane name, including when inside another lane |
 | `--json` | One schema-versioned JSON object on stdout |
 | `--dry-run` | Plan a mutation without changing state, refs, files or logs |
@@ -23,9 +24,11 @@ Dry-run is candidate planning, not an apply token. Applying re-reads and validat
 
 | Command | Behaviour |
 | --- | --- |
-| `create NAME` | Create from committed source with `--branch`, `--profile`, repeated `--project`, `--all`, explicit `--config`, `--agent TOOL` (whose instruction files the lane serves; repeat or comma-separate) or `--dry-run` |
+| `create NAME` | Create from committed source with `--branch`, `--profile`, repeated `--project`, `--all`, explicit `--config`, `--agent TOOL` (whose instruction files the lane serves; repeat or comma-separate) or `--dry-run`. `--json` reports how many files the plan covers (`plan.fileCount`) and leaves the names out, which on a large repository would be a quarter of a megabyte; `--include-files` lists them. `expand` and `sync` follow the same rule |
 | `expand NAME PATH...` | Add projects/paths; repeated `--project` is also accepted |
 | `status NAME` | Show local source changes and durable conflicts; report shared-input warnings |
+| `path NAME` | Print where a lane lives and nothing else, from the registry alone (no Git, no scan), so a script can `cd "$(workcopy path NAME)"` before every build or test. Exit 3 for an unknown or unfinished lane, with nothing on stdout. Inside a lane the name can be omitted |
+| `storage NAME` | Read-only disk cost of one lane by file identity: source, likely build output, bytes shared with files outside the lane, largest directories, and the volume's hard-link and block-clone capability. Not a quota. See [measuring a lane](storage.md#measuring-a-lane) |
 | `sync NAME` | Reconcile the saved selection with the locally resolved upstream ref |
 | `resolve NAME PATH` | Resolve one token-bound conflict with exactly one content choice |
 | `merge NAME` | Prepare an unstaged separate review; `--no-commit` is an alias. `--json` leaves out the per-file inventory (`review.files`, megabytes on a large repository) unless `--include-files` is given |
@@ -38,7 +41,7 @@ Dry-run is candidate planning, not an apply token. Applying re-reads and validat
 | `unshare NAME --path PATH` | Remove one managed link, not its target |
 | `content NAME TOKEN` | Read `--side base`, `local` or `upstream` in base64 chunks |
 | `recover NAME` | Revalidate and resume a recorded incomplete operation. `--abandon-review` drops the receipt of a review whose preparation never finished and cannot be resumed (for example because someone edited it); it deletes no files and prints how to remove the leftover review. Only receipts still in `preparing` are affected |
-| `settings` | Show every effective setting and its source (`--json` for machines). `--init` writes a commented `workcopy.env` template to the per-user location, or to `--settings FILE`, and never overwrites. See [settings](settings.md) |
+| `settings` | Show every effective setting and its source (`--json` for machines). `--init` writes a commented `workcopy.env` template to the per-user location, or to `--settings FILE`, and never overwrites; `--init --project-file` writes one for the current repository only. See [settings](settings.md) |
 | `agent-context [NAME]` | Without a name, preview which untracked agent instruction files (rules, steering, prompts, skills) a new lane would receive, what was refused and why, and unrecognised candidate directories. With a lane name, show what a refresh would change; `--refresh` applies it (copies edited in the lane are kept); `--agent TOOL` previews or switches the tools a lane serves. See [agent context](agent-context.md) |
 | `doctor` | Report the runtime, the Git program in use (and `WORKCOPY_GIT` if set), the repository's line-ending and file-mode settings, and warnings such as a repository on a WSL Windows drive. Accepts `--repo` and `--root`; modifies nothing |
 | `legacy --workspace DIRECTORY` | Read-only metadata inventory; no adoption, conversion or deletion |
@@ -56,7 +59,7 @@ Dry-run is candidate planning, not an apply token. Applying re-reads and validat
 | `WORKCOPY_GIT` | Path or name of the Git program to use instead of the first `git` on `PATH`. A value that does not resolve fails with `git-unavailable` rather than falling back. Useful under WSL when the checkout belongs to Windows Git |
 | `WORKCOPY_IO_WORKERS` | Number of concurrent file operations for bulk work (default: twice the CPU count, 4 to 16). `1` makes bulk operations strictly sequential for diagnosis |
 
-Paths for the other operating system are rejected with exit 2 and the fix: `posix-path-on-windows` when a Windows build is given `/mnt/c/...` (use `C:\...`), `windows-path-on-posix` when a Linux or macOS build is given `C:\...` (use `/mnt/c/...` under WSL).
+Either platform's spelling of a path is accepted wherever a path is: the Windows build takes `/mnt/c/work/repo` as `C:\work\repo`, and the Linux build under WSL takes `C:\work\repo` (or a `\\wsl.localhost\<this distro>\...` share) as the matching `/mnt/c/...`. The answer uses the spelling you used. A path that cannot exist on this platform is refused with exit 2 and the reason: `wsl-path-unreachable` (a Windows build given a path inside WSL's own Linux filesystem, such as `/home/me/repo`) or `windows-path-on-posix` (a Linux build outside WSL or a macOS build given `C:\...`, or any build given another machine's share). See [paths](wsl.md#path-forms).
 
 ## Exit codes
 

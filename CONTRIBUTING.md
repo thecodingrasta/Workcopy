@@ -4,7 +4,7 @@ Start with a bug report, documentation correction or a small testable change. Di
 
 ## Local setup
 
-Use Git 2.43 or newer and a supported patched Go release, at least Go 1.25. The official MCP SDK and transitive modules are pinned in `go.mod`/`go.sum`. Initial module download needs network access; use an approved cache for offline validation. No Node packages, Python environment or `.env` file are needed.
+Use Git 2.43 or newer and the current patched Go release (1.27.4 or newer). The official MCP SDK and transitive modules are pinned in `go.mod`/`go.sum`. Initial module download needs network access; use an approved cache for offline validation. No Node packages, Python environment or `.env` file are needed.
 
 ```sh
 go run ./tools/dev setup
@@ -39,7 +39,7 @@ Repository state schemas and JSON exit contracts are public interfaces. Describe
 
 State what changed, how to reproduce it, the commands you ran and their actual results. Name the operating system and Go/Git versions. Separate native execution from cross-compilation. Mention skipped or unavailable validation. Do not claim another contributor or agent's reported test result as your own observation.
 
-Do not commit generated output, logs, internal handovers, credentials or private repository fixtures. The reviewed bootstrap candidate under `prebuilt/` is the only binary exception; later binaries belong in Releases. Synthetic identities in tests must use reserved domains such as `example.invalid`.
+Do not commit generated output, logs, internal handovers, credentials or private repository fixtures. Binaries never go in Git history; they belong in Releases. Synthetic identities in tests must use reserved domains such as `example.invalid`.
 
 By contributing, you agree that your contribution is available under [GNU GPL v3 or later](LICENSE), as stated in [COPYRIGHT](COPYRIGHT). You retain your copyright. Follow the [code of conduct](CODE_OF_CONDUCT.md) and report vulnerabilities through [SECURITY.md](SECURITY.md).
 

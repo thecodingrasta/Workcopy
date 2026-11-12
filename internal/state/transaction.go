@@ -3,8 +3,11 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"sort"
 
 	"workcopy/internal/eol"
@@ -30,6 +33,9 @@ type Transaction struct {
 	journal  Journal
 	prepared bool
 	paths    map[string]bool
+	// replayed marks a transaction rebuilt from a journal left by an interrupted
+	// run, whose atomic writes may have left temporary files behind.
+	replayed bool
 }
 
 func (s *Store) Begin(next model.Snapshot) (*Transaction, error) {
@@ -62,6 +68,9 @@ func (t *Transaction) canQueue(name string) error {
 func (t *Transaction) Add(name string, before, after model.FileVersion, body []byte, external bool) error {
 	if err := t.canQueue(name); err != nil {
 		return err
+	}
+	if after.Large() {
+		return model.Fail(3, "file-too-large-to-journal", fmt.Sprintf("%s is %d bytes; a large file can only be written from a Git object", name, after.Size))
 	}
 	if after.Exists() {
 		if model.Hash(body) != after.Hash || int64(len(body)) != after.Size {
@@ -96,6 +105,12 @@ func (t *Transaction) afterBody(version model.FileVersion) ([]byte, error) {
 		if err == nil && model.Hash(body) == version.Hash && int64(len(body)) == version.Size {
 			return body, nil
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// Content comes from Git, so the lane's blob store has nothing to
+			// fall back to. Falling through would replace the real cause (the
+			// operation was cut off) with a misleading missing-file error.
+			return nil, err
+		}
 	}
 	return t.store.Blob(version.Hash)
 }
@@ -105,6 +120,9 @@ func (t *Transaction) afterBody(version model.FileVersion) ([]byte, error) {
 func (t *Transaction) AddStaged(name string, before, after model.FileVersion, external bool) error {
 	if err := t.canQueue(name); err != nil {
 		return err
+	}
+	if after.Large() && !t.sourced(after) {
+		return model.Fail(3, "file-too-large-to-journal", fmt.Sprintf("%s is %d bytes and has no Git object to be written from, so it cannot be applied as a recoverable change", name, after.Size))
 	}
 	if err := validateVersion(before); err != nil {
 		return err
@@ -221,8 +239,16 @@ func (t *Transaction) preflight(replay bool) error {
 		if readErr != nil {
 			return readErr
 		}
-		if !current.Equal(op.Before) && (!replay || !current.Equal(op.After)) {
-			return model.Fail(3, "file-changed", "File changed since planning; preserved: "+op.Path)
+		if !current.Equal(op.Before) {
+			done := false
+			if replay {
+				if done, readErr = t.alreadyApplied(op, current, respect); readErr != nil {
+					return readErr
+				}
+			}
+			if !done {
+				return model.Fail(3, "file-changed", "File changed since planning; preserved: "+op.Path)
+			}
 		}
 		return nil
 	})
@@ -260,6 +286,11 @@ func (t *Transaction) Apply() error {
 			return err
 		}
 	}
+	if t.replayed {
+		if err := t.sweepTempArtifacts(); err != nil {
+			return err
+		}
+	}
 	if err := t.store.Save(t.journal.Next); err != nil {
 		return err
 	}
@@ -267,6 +298,58 @@ func (t *Transaction) Apply() error {
 		return err
 	}
 	return t.store.collect(t.journal.Next)
+}
+
+// sweepTempArtifacts removes the temporary files an interrupted run left in the
+// directories this journal writes to. They are generated names no person
+// chooses, were never part of any version, and would otherwise be reported by
+// status as the lane's own additions and carried into a review.
+func (t *Transaction) sweepTempArtifacts() error {
+	directories := make([]string, 0, len(t.journal.Operations))
+	for _, op := range t.journal.Operations {
+		if !op.After.Exists() {
+			continue
+		}
+		directories = append(directories, path.Dir(op.Path))
+	}
+	_, err := t.store.Root.RemoveTempArtifacts(directories)
+	return err
+}
+
+// alreadyApplied reports whether the file on disk is the operation's result.
+// current was read under the before state's line-ending token. A file created
+// from nothing has none, so a text file already written in its lane form
+// (CRLF) is hashed as raw bytes and cannot equal the LF content Git stores.
+// That made every replay of an interrupted create or sync fail on repositories
+// that convert line endings. The comparison must use the token the operation
+// itself would have written.
+func (t *Transaction) alreadyApplied(op Operation, current model.FileVersion, respect bool) (bool, error) {
+	if current.Equal(op.After) {
+		return true, nil
+	}
+	if !op.After.Exists() || op.After.Kind != model.Regular || op.After.Eol == op.Before.Eol {
+		return false, nil
+	}
+	underAfter, _, err := ReadVersion(t.store.Root, op.Path, op.After, respect)
+	if err != nil {
+		return false, err
+	}
+	return underAfter.Equal(op.After), nil
+}
+
+// streamAfter writes a large file straight from its Git object. The bytes pass
+// through once, are hashed on the way and are checked against the recorded hash
+// and size before the file appears at its final name. A large file with no Git
+// object cannot be replayed (nothing durable holds its bytes) and is refused
+// when the transaction is queued, never here.
+func (t *Transaction) streamAfter(op Operation) error {
+	if !t.sourced(op.After) {
+		return fmt.Errorf("large file %s has no Git object to write it from", op.Path)
+	}
+	return t.store.Root.WriteAtomicFrom(op.Path, os.FileMode(op.After.Mode), op.After.Size, op.After.Hash, func(w io.Writer) error {
+		_, err := t.store.Objects.Stream(op.After.ObjectID, w)
+		return err
+	})
 }
 
 // splitLinkWrites separates operations that write a symbolic link from the rest,
@@ -294,6 +377,13 @@ func (t *Transaction) applyOne(op Operation, respect bool) error {
 		return nil
 	}
 	if !current.Equal(op.Before) {
+		done, doneErr := t.alreadyApplied(op, current, respect)
+		if doneErr != nil {
+			return doneErr
+		}
+		if done {
+			return nil
+		}
 		return model.Fail(3, "file-changed", "File changed during apply; preserved: "+op.Path)
 	}
 	if !op.After.Exists() {
@@ -303,6 +393,9 @@ func (t *Transaction) applyOne(op Operation, respect bool) error {
 		if err = t.removeEmptyDestination(op.Path); err != nil {
 			return err
 		}
+	}
+	if op.After.Large() {
+		return t.streamAfter(op)
 	}
 	body, err := t.afterBody(op.After)
 	if err != nil {
@@ -332,5 +425,5 @@ func (s *Store) Recover() error {
 	if journal.SchemaVersion != 1 || journal.Next.Manifest.Generation != journal.FromGeneration+1 {
 		return fmt.Errorf("unsupported or corrupt journal")
 	}
-	return (&Transaction{store: s, journal: journal, prepared: true}).Apply()
+	return (&Transaction{store: s, journal: journal, prepared: true, replayed: true}).Apply()
 }
