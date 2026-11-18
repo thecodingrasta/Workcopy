@@ -49,12 +49,14 @@ jobs:
           fi
           go run ./tools/dev package "$VERSION"
           (cd dist && sha256sum -c SHA256SUMS)
+          (cd dist && sha256sum -c AGENT_PLUGIN_SHA256SUMS)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-downloads
           path: |
             dist/workcopy_*
             dist/SHA256SUMS
+            dist/AGENT_PLUGIN_SHA256SUMS
           if-no-files-found: error
           retention-days: 14
   smoke:
@@ -122,4 +124,4 @@ jobs:
           set -euo pipefail
           flags=(--verify-tag --draft --generate-notes)
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$VERSION" dist/workcopy_* dist/SHA256SUMS "${flags[@]}"
+          gh release create "$VERSION" dist/workcopy_* dist/SHA256SUMS dist/AGENT_PLUGIN_SHA256SUMS "${flags[@]}"

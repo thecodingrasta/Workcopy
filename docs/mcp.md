@@ -1,10 +1,10 @@
 # Workcopy MCP
 
-Workcopy includes a local stdio MCP server in the CLI executable. The official Go SDK is pinned to v1.7.0 and supports MCP **2026-07-28**, plus 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05 clients. Protocol framing, discovery/initialization, schemas and cancellation use that SDK. There is no network listener, arbitrary shell executor, agent runtime or background daemon.
+Workcopy includes a local stdio MCP server in the CLI executable. The official Go SDK is pinned to v1.8.0 and supports MCP **2026-07-28**, plus 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05 clients. Protocol framing, discovery/initialization, schemas and cancellation use that SDK. There is no network listener, arbitrary shell executor, agent runtime or background daemon.
 
 ## Install and connect
 
-Download the directly runnable executable and verify its checksum using the [installation guide](../README.md#install). Go is needed only when building from source. The tracked Windows bootstrap candidate is a legacy ZIP exception; normal release binary assets do not need extraction. Check your executable:
+Download the directly runnable executable and verify its checksum using the [installation guide](../README.md#install). Go is needed only when building from source. Check your executable:
 
 ```powershell
 C:\tools\workcopy.exe version
@@ -117,6 +117,7 @@ Results contain `schemaVersion:1`, `exitCode`, and `scope`, `report`, `context`,
 | `workcopy_resolve` | Resolve one current conflict |
 | `workcopy_solution` | Selected-project filter for a lane `.sln` |
 | `workcopy_review` | Separate unstaged human review |
+| `workcopy_batch_review` | Combined review of the explicitly selected ordered `names` against the local `branch`. Supports `dryRun` and token-bound `resolutions` |
 | `workcopy_share` | Explicit link to owner-allowlisted dependency target |
 | `workcopy_unshare` | Remove link, retaining target |
 | `workcopy_recover` | Guarded interrupted-operation recovery |
@@ -129,6 +130,8 @@ Exit codes match CLI: **0** success, **1** unresolved conflict, **2** usage erro
 Collections take `offset` and `limit` (default 100, maximum 200). `pages` reports each total and next offset; 0 means complete. Read remaining pages before concluding conflicts/projects are absent. Pagination is not a snapshot token: after concurrent changes, reread status/generation. Review results omit the full inventory but retain receipt/generation/state/base commit/path. Conflict content uses separate `byteOffset`/`byteLimit` (at most 65,536), base64 data and whole-content SHA-256. Follow content `nextOffset` until **-1**, assemble bytes and verify the hash.
 
 ## Isolated validation and storage
+
+For several completed lanes, use `workcopy_batch_review` with the owner's selected subset. The response reports `batch.id`, `lanes`, `target`, `base`, `commit`, `path` and `state` under `report`. If reconciliation stops, inspect `batchConflict` and resubmit the same selection with `resolutions`, each carrying the current `token` and `choice`. The optional `content` is base64 for the `file` choice. A successful prepared review returns top-level `batchLandArgs` without approval. After the owner approves the exact batch ID, pass those arguments and append `--approve` to the authorized local Workcopy executable. The arguments pin `scope.repo` and `scope.root` even when the CLI defaults differ. Use those exact paths for recovery too. See the [batch workflow](workflow.md#review-and-land-several-lanes).
 
 Workers execute approved commands in their lanes using normal host tools. MCP does not run arbitrary builds/restores. Use the [controller and worker prompts](agents.md) for exact handoff/return fields. Workers can validate and prepare reviews, but the human inspects each review and decides whether and how to integrate it. A review receipt is not proof of integration.
 
@@ -159,7 +162,7 @@ Fixtures do not certify arbitrary real monorepos. Run native validation on each 
 
 The approved optional Node check is `WORKCOPY_NODE_LANE_ACCEPTANCE=1 go test ./tests/acceptance -run '^TestSelectedNodeWorkspaceBuildsAndTestsInsideLane$' -count=1` (set the environment variable separately in PowerShell). It executes tiny offline npm build/test scripts with no installs, includes a selected workspace's dependency, excludes an unrelated package, and verifies lane-local outputs. See contributor instructions for the opt-in .NET restore/build/test check.
 
-References: [current specification](https://modelcontextprotocol.io/specification/2026-07-28), [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio), [official Go SDK](https://github.com/modelcontextprotocol/go-sdk/tree/v1.7.0).
+References: [current specification](https://modelcontextprotocol.io/specification/2026-07-28), [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio), [official Go SDK](https://github.com/modelcontextprotocol/go-sdk/tree/v1.8.0).
 
 ### Host boundary checklist
 

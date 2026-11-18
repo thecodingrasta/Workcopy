@@ -83,6 +83,10 @@ Review worktrees contain full tracked source, not only the active lane's selecti
 
 Inspect the review with Git, including untracked additions. A prepared review is an exported copy, not proof of integration.
 
+The original checkout does **not** need to be clean. You do not need to commit, stash or discard its staged, unstaged or untracked changes before preparing or inspecting a review. Workcopy reads the committed upstream snapshot and keeps the original checkout's HEAD, index and files untouched; those local checkout changes are not included in the lane review. Keep them safe and review them separately.
+
+If `merge` finds an upstream conflict while syncing the lane, it stops before preparing a review and reports the conflict. Workcopy preserves the lane's local bytes and records the conflict; it does not choose a resolution for you. An agent can help resolve it when you explicitly assign that work and provide the needed product decisions, but review the resolution along with the resulting diff. Once conflicts are resolved, run `merge` again.
+
 ## Commit and integrate
 
 After reviewing the exact prepared contents, request an explicit commit:
@@ -96,6 +100,32 @@ Workcopy checks the lane generation, review content, index and detached HEAD. It
 A changed review is not silently overwritten or re-approved. Use normal Git to manage a deliberately edited review yourself, or preserve it and prepare a new lane contribution. Workcopy's approval path is for unchanged receipts.
 
 Integrate the resulting commit using your normal review process. For example, a human may cherry-pick the commit onto the intended branch. Workcopy does not execute that integration. After the upstream ref contains the contribution, sync the lane again; it can then become clean.
+
+## Review and land several lanes
+
+Tell the agent which lanes to include, their order if it matters, and the target branch. Use the same `--repo` and `--root` as the selected lanes. The target must be a local branch. Prepare from its checkout so the same checkout can land the review.
+
+```sh
+workcopy batch-review api-fix search-fix ui-fix --branch main --repo "REPO" --root "ROOT" --json
+git -C REVIEW-PATH diff --no-ext-diff --no-textconv BASE CANDIDATE
+workcopy batch-land BATCH-ID --repo "REPO" --root "ROOT" --approve
+```
+
+The first command prepares one detached review from the current local target commit. It combines only the listed lane contributions, in the given order. It uses each lane's accepted baseline, so the agent can prepare the batch after the branch has advanced. The printed review path, base, candidate and batch ID identify the exact result. The diff includes new files. Run relevant checks on that result before showing it to the owner. Keep generated test outputs outside the review or remove the outputs that validation created before landing.
+
+If preparation reports a conflict, the agent can inspect the lane file and the base and combined blob IDs shown in `batchConflict`. Read committed or combined objects with `git cat-file blob OBJECT-ID`. Use the current token in a JSON file and pass it as `--from-file RESOLUTIONS` on the same batch review command. The choices are `lane`, `combined`, `delete` or `file`. For `file`, supply the resolved stored bytes as base64 in `content`. Include prior resolutions when another conflict is reported. Ask the owner if the intended behavior is unclear.
+
+```json
+{"resolutions":[{"token":"TOKEN-FROM-REPORT","choice":"combined"}]}
+```
+
+Approve the batch ID after inspecting the combined diff. An authorized agent can run `batch-land` from the checkout used to prepare it, with the target branch checked out. Workcopy validates the target, selected lanes, and review, then fast-forwards the branch to the candidate as one commit. Shut down concurrent Git mutations in that checkout during landing. A dirty checkout can be used throughout. Git blocks tracked, untracked or ignored file collisions that would overwrite local work. The owner can preserve or move the blocking edits and retry. A changed target or selected contribution requires a fresh combined review and approval.
+
+If the repository requires signed merges through `merge.verifySignatures`, Workcopy blocks the unsigned candidate and keeps the review available. Use the repository's signing workflow for that review.
+
+If review preparation returns a batch ID and is interrupted, run `workcopy batch-recover BATCH-ID --repo "REPO" --root "ROOT"` with the same scope to complete its recorded review. Recovery can also record a completed landing when Git already advanced the exact branch to the candidate. If landing was interrupted and the branch did not advance, inspect the checkout's HEAD, index and files before retrying with a fresh batch. Workcopy never replays an uncertain checkout write automatically.
+
+Keep the combined review until integration or recovery is complete. Afterwards, the owner can remove its separate review folder with `git worktree remove REVIEW-PATH`. The selected lanes remain available. Sync a lane against the branch that now contains its contribution before checking whether it is ready for guarded cleanup.
 
 ## Delete
 

@@ -1,7 +1,6 @@
 package acceptance
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"workcopy/internal/model"
 	"workcopy/internal/testutil"
@@ -84,26 +82,13 @@ func removeTestOutput(directory string) error {
 }
 func invoke(t *testing.T, directory string, expected int, arguments ...string) workspace.Report {
 	t.Helper()
-	recordCommand(arguments...)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, executable, append(arguments, "--json")...)
-	command.Dir = directory
-	body, err := command.Output()
-	code := 0
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			code = exit.ExitCode()
-		} else {
-			t.Fatal(err)
-		}
-	}
+	body, stderr, code := run(t, directory, nil, append(arguments, "--json")...)
 	var result workspace.Report
-	if err = json.Unmarshal(body, &result); err != nil {
-		t.Fatalf("invalid JSON: %s: %v", body, err)
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		t.Fatalf("%v: invalid JSON (%v), process exit %d, stdout=%q stderr=%q", arguments, err, code, body, stderr)
 	}
 	if result.ExitCode != code || code != expected {
-		t.Fatalf("%v: expected %d; process %d; JSON %s", arguments, expected, code, body)
+		t.Fatalf("%v: expected exit %d, process exit %d, stdout=%q stderr=%q", arguments, expected, code, body, stderr)
 	}
 	if result.SchemaVersion != 1 {
 		t.Fatalf("missing versioned envelope: %s", body)

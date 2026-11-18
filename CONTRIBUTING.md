@@ -76,7 +76,7 @@ Two environment variables select where some tests run, so a contributor on WSL c
 - `WORKCOPY_UNRELIABLE_MODE_FS=DIR` points at a directory on a filesystem that reports every new file as executable (a `drvfs` mount made without the `metadata` option, or FAT mounted with `fmask=0000`). `TestLaneOnFilesystemThatReportsEveryFileExecutable` then creates its lanes there and refuses to run if the premise is false. Without it the test simulates the symptom with `chmod` on Unix.
 - `WORKCOPY_BENCH_FILES=N` enables `BenchmarkLaneLifecycle`. Set `TEMP`/`TMPDIR` to the filesystem under test.
 
-`WORKCOPY_IO_WORKERS=1` runs bulk file operations sequentially. The per-package test timeout in the canonical tasks is ten minutes; it only guards against hangs, and the slowest package (the acceptance tests) takes about five minutes under `-race` on Windows.
+`WORKCOPY_IO_WORKERS=1` runs bulk file operations sequentially. The per-package timeout is ten minutes for `go run ./tools/dev test` and fifteen minutes for the race-enabled `go run ./tools/dev validate`. These limits guard against hangs. The acceptance suite can take over nine minutes on hosted Windows runners.
 
 ## Settings isolation, interop and coverage guards
 

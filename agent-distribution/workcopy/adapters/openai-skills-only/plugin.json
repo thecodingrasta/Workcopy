@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "workcopy-skills",
+  "version": "{{VERSION}}",
+  "description": "Guided Workcopy setup, lane management, review, storage, and repository validation workflows.",
+  "author": {"name": "Workcopy maintainers"},
+  "homepage": "https://github.com/thecodingrasta/Workcopy",
+  "repository": "https://github.com/thecodingrasta/Workcopy",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["workcopy", "agent skills", "developer tools"]
+}

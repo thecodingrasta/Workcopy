@@ -1,0 +1,23 @@
+{
+  "workcopy_doctor": {},
+  "workcopy_bootstrap": {"directory": "${REPOSITORY}"},
+  "workcopy_discover": {"repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_list": {"repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_lane_context": {"name": "task-lane", "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_status": {"name": "task-lane", "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_storage": {"name": "task-lane", "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_create": {"name": "task-lane", "projects": ["discovered-project-id"], "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_expand": {"name": "task-lane", "projects": ["discovered-project-id"], "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_sync": {"name": "task-lane", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_resolve": {"name": "task-lane", "path": "src/file.go", "token": "current-conflict-token", "mode": "local", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_content": {"name": "task-lane", "token": "current-conflict-token", "side": "local", "byteOffset": 0, "byteLimit": 65536, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_review": {"name": "task-lane", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_batch_review": {"names": ["task-lane", "test-lane"], "branch": "main", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_solution": {"name": "task-lane", "path": "Product.sln", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_share": {"name": "task-lane", "path": "packages", "target": "${SHARED_TARGET}", "dependencyIdentity": "lockfile-sha256", "trustShared": false, "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_agent_context": {"name": "task-lane", "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_refresh_context": {"name": "task-lane", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_unshare": {"name": "task-lane", "path": "packages", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_recover": {"name": "task-lane", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"},
+  "workcopy_destroy": {"name": "task-lane", "dryRun": true, "repo": "${REPOSITORY}", "root": "${WORK_ROOT}"}
+}

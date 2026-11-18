@@ -23,7 +23,7 @@ func run(t *testing.T, directory string, environment []string, arguments ...stri
 	recordCommand(arguments...)
 	// Generous: a large repository on a 9p mount (WSL drvfs) takes over a minute per
 	// command when the machine is busy. This only bounds a hang.
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Dir = directory
@@ -32,9 +32,12 @@ func run(t *testing.T, directory string, environment []string, arguments ...stri
 	command.Stdout, command.Stderr = &stdout, &stderr
 	code := 0
 	if err := command.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			t.Fatalf("%v: command interrupted: %v, stdout=%q stderr=%q", arguments, ctxErr, stdout.String(), stderr.String())
+		}
 		exit, ok := err.(*exec.ExitError)
 		if !ok {
-			t.Fatal(err)
+			t.Fatalf("%v: command failed: %v, stdout=%q stderr=%q", arguments, err, stdout.String(), stderr.String())
 		}
 		code = exit.ExitCode()
 	}

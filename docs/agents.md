@@ -26,7 +26,7 @@ Use one lane per independently writing agent. A lane is an ordinary source direc
 
 ## Human review and integration
 
-Workers may edit, validate, reconcile and prepare a review. The human remains responsible for inspecting that review and deciding whether, when and how to integrate it. A review receipt proves what Workcopy prepared; it is not an integration result. No Workcopy command pushes or integrates changes into the original branch.
+Workers edit and validate their assigned lane. The controller prepares and validates a combined review for the owner's selected lanes. The owner reviews and approves its exact batch ID. The controller can then pass the returned `batchLandArgs` and `--approve` to the authorized local Workcopy executable. Use the [batch workflow](workflow.md#review-and-land-several-lanes) for conflicts and recovery.
 
 Keep mutable build outputs private to each lane. They may duplicate across lanes and can exceed Workcopy's source storage estimate; include them in the task's disk budget and clean only disposable outputs. Never point concurrent lanes at the same `bin`, `obj`, generated-source or coverage directory. Workcopy's `share` creates a writable link and does not coordinate writes to the target. A package download cache may be shared only when its package manager documents concurrent use and the controller confirms that the runtime and lockfiles match; otherwise use separate caches. Many managers already keep caches outside the lane, so no Workcopy link is needed.
 
@@ -50,7 +50,7 @@ Root-level tracked files are included in every project lane by default, subject 
 
 Agents may edit separate lane directories concurrently. Workcopy mutations are locked per lane, so do not let two agents mutate the same lane at once. Lane creation, review preparation, recovery and destruction use a workspace-root lock and can report `workspace-busy`; run those operations one at a time and do not work around the lock. Review commits and other lane mutations use the lane lock. Shared dependency links are writable by design: do not let concurrent agents use the same shared dependency target unless they coordinate its writes.
 
-Each lane has a separate review; `merge` prepares one or reuses its existing review when it is still current. Inspect each complete diff and its untracked files, then integrate review commits using the repository's normal Git process. After integration advances the selected branch, sync the other lanes before preparing or refreshing their reviews. A Workcopy review commit is not itself integration into the selected branch.
+For several completed lanes, ask which ones should land and prepare a single batch from that subset. Validate the combined candidate, including interactions across lanes. Report the selected names, target, base, candidate, review path, batch ID and check results. After explicit approval for that ID, land the batch and report the resulting branch tip. If the branch or a selected lane changes before landing, prepare and present a fresh batch.
 
 The lane directory and its initial status check help the agent stay oriented; Workcopy cannot guarantee that an unrestricted agent stays there. If a write to the base checkout would be unacceptable, enforce that with the execution host's filesystem permissions or sandbox and verify those permissions independently.
 

@@ -92,6 +92,7 @@ jobs:
           path: |
             dist/workcopy_*
             dist/SHA256SUMS
+            dist/AGENT_PLUGIN_SHA256SUMS
           if-no-files-found: error
           retention-days: 14
   lane-validation:

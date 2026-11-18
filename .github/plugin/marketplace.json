@@ -1,0 +1,24 @@
+{
+  "name": "workcopy-tools",
+  "owner": {
+    "name": "Workcopy maintainers"
+  },
+  "metadata": {
+    "description": "Agent Skills and MCP integrations for Workcopy."
+  },
+  "plugins": [
+    {
+      "name": "workcopy",
+      "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review.",
+      "source": "agent-distribution/workcopy/plugin",
+      "author": {
+        "name": "Workcopy maintainers"
+      },
+      "homepage": "https://github.com/thecodingrasta/Workcopy",
+      "repository": "https://github.com/thecodingrasta/Workcopy",
+      "license": "GPL-3.0-or-later",
+      "keywords": ["workcopy", "mcp", "agent skills", "human review"],
+      "category": "Developer tools"
+    }
+  ]
+}

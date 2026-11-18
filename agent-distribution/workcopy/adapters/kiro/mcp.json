@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "workcopy": {
+      "command": "workcopy",
+      "args": ["mcp"]
+    }
+  }
+}

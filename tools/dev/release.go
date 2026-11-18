@@ -22,6 +22,7 @@ import (
 var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
 var assetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_(linux|windows|darwin)_(amd64|arm64)(\.exe)?$`)
 var sourceAssetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_source\.tar\.gz$`)
+var agentPluginAssetName = regexp.MustCompile(`^workcopy_agent_[a-z0-9-]+_v[0-9A-Za-z.-]+\.zip$`)
 
 func validVersion(value string) bool { return len(value) <= 64 && releaseVersion.MatchString(value) }
 
@@ -85,6 +86,12 @@ func writeArchive(filename string, entries []archiveEntry) (result error) {
 	return gzipWriter.Close()
 }
 func release(ctx context.Context, root, version string, nativeOnly bool) error {
+	pluginVersion := strings.TrimPrefix(version, "v")
+	if !nativeOnly {
+		if err := command(ctx, nil, "go", "run", "./tools/agentdist", "validate", "--release-version", pluginVersion); err != nil {
+			return fmt.Errorf("validate release plugin version: %w", err)
+		}
+	}
 	if err := prepareDist(root); err != nil {
 		return err
 	}
@@ -141,6 +148,9 @@ func release(ctx context.Context, root, version string, nativeOnly bool) error {
 			}
 		}
 	}
+	if err = command(ctx, nil, "go", "run", "./tools/agentdist", "package", "--version", pluginVersion, "--output", "dist"); err != nil {
+		return err
+	}
 	sort.Strings(checksums)
 	return os.WriteFile(sumPath, []byte(strings.Join(checksums, "\n")+"\n"), 0644)
 }
@@ -152,7 +162,7 @@ func sourceFiles(root string) ([]archiveEntry, error) {
 	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "COPYRIGHT", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.md", "AGENTS.md", ".gitignore", ".editorconfig", ".gitattributes"} {
 		topFiles[name] = true
 	}
-	directories := map[string]bool{"cmd": true, "internal": true, "tools": true, "tests": true, "docs": true, "schema": true, "examples": true, "scripts": true, ".github": true}
+	directories := map[string]bool{"cmd": true, "internal": true, "tools": true, "tests": true, "docs": true, "schema": true, "examples": true, "scripts": true, ".github": true, ".claude-plugin": true, ".cursor-plugin": true, "agent-distribution": true}
 	entries := []archiveEntry{}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

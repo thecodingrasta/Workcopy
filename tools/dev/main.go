@@ -70,10 +70,15 @@ func run(ctx context.Context, arguments []string) error {
 		if err = formatFiles(root, false); err != nil {
 			return err
 		}
+		if err = command(ctx, nil, "go", "run", "./tools/agentdist", "validate"); err != nil {
+			return err
+		}
 		if err = command(ctx, nil, "go", "vet", "./..."); err != nil {
 			return err
 		}
-		if err = command(ctx, nil, "go", "test", "-race", "-count=1", "-timeout=600s", "./..."); err != nil {
+		// On hosted Windows runners, acceptance has taken over nine minutes
+		// even when the three-lane journey stopped early.
+		if err = command(ctx, nil, "go", "test", "-race", "-count=1", "-timeout=15m", "./..."); err != nil {
 			return err
 		}
 		if err = build(ctx, root, runtime.GOOS, runtime.GOARCH, "dev", binaryName(runtime.GOOS)); err != nil {
@@ -308,7 +313,7 @@ func clean(root string) error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.Type().IsRegular() || !(name == ".workcopy-build" || name == "workcopy" || name == "workcopy.exe" || name == "SHA256SUMS" || assetName.MatchString(name) || sourceAssetName.MatchString(name)) {
+		if !entry.Type().IsRegular() || !(name == ".workcopy-build" || name == "workcopy" || name == "workcopy.exe" || name == "SHA256SUMS" || name == "AGENT_PLUGIN_SHA256SUMS" || assetName.MatchString(name) || sourceAssetName.MatchString(name) || agentPluginAssetName.MatchString(name)) {
 			return fmt.Errorf("refusing to remove unrecognized build output %q", name)
 		}
 	}

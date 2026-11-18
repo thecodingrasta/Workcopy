@@ -192,8 +192,7 @@ func TestToolSurfaceHasNoBypassAndRejectsUnknownArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 19 tools plus the read-only workcopy_storage report.
-	if len(list.Tools) != 20 {
+	if len(list.Tools) != 21 {
 		t.Fatalf("tools: %d", len(list.Tools))
 	}
 	for _, tool := range list.Tools {
@@ -208,6 +207,18 @@ func TestToolSurfaceHasNoBypassAndRejectsUnknownArguments(t *testing.T) {
 	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "workcopy_create", Arguments: map[string]any{"name": "one", "dryRun": false, "projects": []string{"A"}, "config": "other"}})
 	if err == nil && (result == nil || !result.IsError) {
 		t.Fatal("arbitrary configuration path accepted")
+	}
+}
+
+func TestBatchReviewToolRejectsDuplicateSelection(t *testing.T) {
+	session, _, _ := connect(t, Options{})
+	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	if created.ExitCode != 0 {
+		t.Fatal(created)
+	}
+	result := call(t, session, "batch_review", BatchInput{Names: []string{"one", "one"}, DryRun: true})
+	if result.ExitCode != 2 || result.Error == nil || result.Error.Code != "duplicate-batch-lane" {
+		t.Fatal(result)
 	}
 }
 

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "defaultVersion": "0.2.0",
+  "license": "GPL-3.0-or-later",
+  "pluginRoot": "plugin",
+  "skillsRoot": "plugin/skills",
+  "contractExamples": "contracts.json",
+  "mcpRegistrationSource": "internal/mcpserver/server.go",
+  "mcpToolPrefix": "workcopy_",
+  "expectedMcpTools": 21,
+  "cliHelpSource": "internal/cli/cli.go",
+  "cliHelpConstant": "helpText",
+  "cliName": "workcopy",
+  "githubMarketplace": ".github/plugin/marketplace.json",
+  "claudeMarketplace": ".claude-plugin/marketplace.json",
+  "cursorMarketplace": ".cursor-plugin/marketplace.json",
+  "licenseFiles": ["LICENSE", "COPYRIGHT"],
+  "targets": [
+    {"id": "plugin", "source": "plugin", "skillsPath": "skills", "archive": "workcopy_agent_plugin", "publishSource": true},
+    {"id": "kiro-power", "source": "plugin", "skillsPath": "skills", "archive": "workcopy_agent_kiro-power"},
+    {"id": "claude-code", "source": "adapters/claude-code", "skillsPath": "skills", "archive": "workcopy_agent_claude-code", "publishSource": true},
+    {"id": "antigravity", "source": "adapters/antigravity", "skillsPath": "skills", "archive": "workcopy_agent_antigravity"},
+    {"id": "cursor", "source": "adapters/cursor", "skillsPath": "skills", "archive": "workcopy_agent_cursor", "publishSource": true},
+    {"id": "openai-skills-only", "source": "adapters/openai-skills-only", "skillsPath": "skills", "archive": "workcopy_agent_openai-skills-only"},
+    {"id": "opencode", "source": "adapters/opencode", "skillsPath": ".agents/skills", "archive": "workcopy_agent_opencode"},
+    {"id": "kiro", "source": "adapters/kiro", "skillsPath": ".kiro/skills", "archive": "workcopy_agent_kiro"},
+    {"id": "vscode-copilot", "source": "adapters/vscode-copilot", "skillsPath": ".github/skills", "archive": "workcopy_agent_vscode-copilot"}
+  ]
+}

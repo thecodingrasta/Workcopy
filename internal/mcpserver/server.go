@@ -61,6 +61,7 @@ type Failure struct {
 type Output struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	Scope         *Scope              `json:"scope,omitempty"`
+	BatchLandArgs []string            `json:"batchLandArgs,omitempty" jsonschema:"Local Workcopy CLI arguments for this prepared batch; add --approve only after owner approval"`
 	ExitCode      int                 `json:"exitCode"`
 	Report        *workspace.Report   `json:"report,omitempty"`
 	Context       *Context            `json:"context,omitempty"`
@@ -87,6 +88,14 @@ type Lane struct {
 type Mutation struct {
 	Lane
 	DryRun bool `json:"dryRun" jsonschema:"Preview without persistent side effects"`
+}
+
+type BatchInput struct {
+	Empty
+	Names       []string                    `json:"names" jsonschema:"Selected registered lanes in integration order"`
+	Branch      string                      `json:"branch,omitempty" jsonschema:"Local target branch, defaulting to the current branch"`
+	DryRun      bool                        `json:"dryRun" jsonschema:"Estimate storage without preparing a review"`
+	Resolutions []workspace.BatchResolution `json:"resolutions,omitempty" jsonschema:"Explicit resolutions for current batch conflict tokens"`
 }
 
 // ContextInput selects a lane for agent_context; without a name it previews the
@@ -264,6 +273,12 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		r, e := s.engine.Merge(ctx, in.Name, workspace.MergeOptions{}, in.DryRun)
 		return s.result(r, e, in.Page), nil
 	})
+	add(s, "batch_review", "Prepare one isolated combined review of the selected lanes against a local branch. Landing requires separate explicit approval.", false, func(ctx context.Context, s *Server, in BatchInput) (Output, error) {
+		r, e := s.engine.PrepareBatchWithAdmission(ctx, in.Names, in.Branch, in.Resolutions, in.DryRun, func(plan workspace.Plan) error {
+			return s.admit(ctx, plan.SourceBytes, plan.FileCount, false)
+		})
+		return s.result(r, e, in.Page), nil
+	})
 	add(s, "solution", "Generate a selected-project .slnf from a lane .sln. For .slnx use selected project files directly. Not a build verdict.", false, func(ctx context.Context, s *Server, in Solution) (Output, error) {
 		r, e := s.engine.Solution(ctx, in.Name, in.Path, in.DryRun)
 		return s.result(r, e, in.Page), nil
@@ -385,6 +400,9 @@ func add[I any](s *Server, name, description string, readOnly bool, handler func
 		}
 		if selected.engine != nil {
 			out.Scope = &Scope{Repo: selected.engine.Repository.Root, Root: selected.engine.WorkRoot}
+			if out.ExitCode == 0 && out.Report != nil && out.Report.Batch != nil && out.Report.Batch.State == "prepared" {
+				out.BatchLandArgs = []string{"batch-land", out.Report.Batch.ID, "--repo", out.Scope.Repo, "--root", out.Scope.Root}
+			}
 		}
 		return &mcp.CallToolResult{IsError: out.ExitCode != 0 && out.ExitCode != 4}, out, nil
 	}
@@ -438,6 +456,9 @@ func (s *Server) result(report workspace.Report, err error, page Page) Output {
 			out.Error.Code = "cancelled"
 			out.Error.Message = "The operation was interrupted by the tool deadline or a cancellation."
 			out.Error.Suggestion = "Partial work is recoverable: call workcopy_recover for the lane, then retry. The owner can raise the deadline with --tool-timeout."
+			if report.Command == "batch-review" {
+				out.Error.Suggestion = "If a batch ID was returned, run workcopy batch-recover BATCH-ID --repo REPO --root ROOT with the exact returned scope. Otherwise retry batch review."
+			}
 		}
 	}
 	report.ExitCode = out.ExitCode

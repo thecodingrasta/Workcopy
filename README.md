@@ -8,7 +8,7 @@
 [![Go 1.27+](https://img.shields.io/badge/source-Go%201.27%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-stdio-6750A4.svg)](docs/mcp.md)
 
-Workcopy copies committed source into a plain folder called a **lane**. No `.git` inside it, so nothing can reset a branch, corrupt an index or push anywhere. Edit, build and test there. When you're done, Workcopy prepares a separate, unstaged review for a human to check before anything is integrated. Your real checkout is never touched.
+Workcopy copies committed source into a plain folder called a **lane**. No `.git` inside it, so nothing can reset a branch, corrupt an index or push anywhere. Edit, build and test there. Workcopy prepares reviews in a separate folder while you keep working in your checkout. After you approve a combined review, Workcopy can land the selected lanes on your local branch.
 
 ## Why it exists
 
@@ -83,6 +83,20 @@ Restart the host after saving, then tell your agent:
 
 The agent discovers projects and previews each lane before creating it. It needs your approval for any dependency download; Workcopy itself never installs packages. You still review every result before integration. Full details, every tool and multi-repository setup: [MCP guide](docs/mcp.md). Multi-agent ownership and handoffs: [controller and worker prompts](docs/agents.md).
 
+## Agent Skills and plugins
+
+Workcopy includes canonical Agent Skills and native adapters for Claude Code, Antigravity, Cursor, OpenCode, Kiro, and VS Code/Copilot. The portable Agent Plugin uses the same local Go MCP server. Repository marketplace catalogs are prepared for Claude Code, Cursor, and GitHub Copilot. For current package, setup, and publication instructions, see the [Agent Plugin publication guide](docs/AGENT_PLUGIN_PUBLICATION.md).
+
+Validate and package the distribution from source with Go:
+
+```sh
+go run ./tools/agentdist sync-skills
+go run ./tools/agentdist validate
+go run ./tools/agentdist package --output dist
+```
+
+The package command is included in the reviewed release workflow; it creates ZIPs and `AGENT_PLUGIN_SHA256SUMS` without publishing marketplace listings.
+
 ## Your first lane
 
 Run inside an existing Git repository with at least one commit:
@@ -104,6 +118,17 @@ workcopy merge
 ```
 
 `sync` catches you up with upstream changes and flags conflicts to fix before re-running `merge`. `merge` doesn't commit anything; it prints the path to a separate review folder. Inspect that diff yourself before deciding whether to bring it in. See the [workflow guide](docs/workflow.md) for approval, recovery and cleanup.
+
+## Review and merge several lanes
+
+Select the lanes you want in one review. Run from the target checkout and use the same workspace root used to create the lanes:
+
+```sh
+workcopy batch-review api-fix search-fix ui-fix --branch main
+workcopy batch-land BATCH-ID --approve
+```
+
+The agent prepares and validates one combined result against the current local branch. Inspect the combined diff and explicitly approve its batch ID before landing. Unrelated local edits can stay in the checkout. If Git finds an overlapping local file, the review is retained and landing is blocked. See the [batch workflow](docs/workflow.md#review-and-land-several-lanes) for conflict resolution, approval and recovery.
 
 ## Large repositories
 

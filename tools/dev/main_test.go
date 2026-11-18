@@ -136,7 +136,7 @@ func TestFormattingRejectsLinkedSource(t *testing.T) {
 
 func TestCorrespondingSourceExcludesPrivateAndGeneratedFiles(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "COPYRIGHT", "README.md", ".gitignore", ".editorconfig", ".gitattributes", "cmd/workcopy/main.go", "tools/dev/main.go", "docs/nested/guide.md", ".codex/private.md", ".cache/secret.go", ".git/config", "prebuilt/archive.zip", "dist/workcopy.exe", "unrelated.txt"} {
+	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "COPYRIGHT", "README.md", ".gitignore", ".editorconfig", ".gitattributes", "cmd/workcopy/main.go", "tools/dev/main.go", "docs/nested/guide.md", ".claude-plugin/marketplace.json", ".cursor-plugin/marketplace.json", ".codex/private.md", ".cache/secret.go", ".git/config", "prebuilt/archive.zip", "dist/workcopy.exe", "unrelated.txt"} {
 		filename := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
 			t.Fatal(err)
@@ -153,7 +153,7 @@ func TestCorrespondingSourceExcludesPrivateAndGeneratedFiles(t *testing.T) {
 	for _, entry := range entries {
 		names[entry.Name] = true
 	}
-	for _, name := range []string{"go.mod", "COPYRIGHT", ".editorconfig", ".gitattributes", "tools/dev/main.go", "docs/nested/guide.md"} {
+	for _, name := range []string{"go.mod", "COPYRIGHT", ".editorconfig", ".gitattributes", "tools/dev/main.go", "docs/nested/guide.md", ".claude-plugin/marketplace.json", ".cursor-plugin/marketplace.json"} {
 		if !names[name] {
 			t.Error("source input omitted", name)
 		}
