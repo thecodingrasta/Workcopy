@@ -1,0 +1,14 @@
+{
+  "name": "workcopy-tools",
+  "description": "Workcopy agent plugins and skills.",
+  "owner": {
+    "name": "Workcopy maintainers"
+  },
+  "plugins": [
+    {
+      "name": "workcopy",
+      "source": "./agent-distribution/workcopy/adapters/claude-code",
+      "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review."
+    }
+  ]
+}

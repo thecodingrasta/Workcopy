@@ -1,0 +1,20 @@
+{
+  "name": "Workcopy",
+  "pluginId": "workcopy",
+  "description": "Create explicitly scoped, Git-free development lanes and prepare changes for human review.",
+  "publisher": "Workcopy maintainers",
+  "repository": "https://github.com/thecodingrasta/Workcopy",
+  "homepage": "https://github.com/thecodingrasta/Workcopy",
+  "license": "GPL-3.0-or-later",
+  "categories": ["Developer tools", "Code review", "Agents"],
+  "keywords": ["Git-free lanes", "MCP", "Agent Skills", "human review", "Go"],
+  "supportedPlatforms": ["Windows amd64", "Windows arm64 (release build; native runtime verification required)", "Linux amd64", "Linux arm64", "macOS amd64", "macOS arm64"],
+  "privacy": "The plugin starts Workcopy as a local stdio MCP subprocess. Workcopy reads the selected local checkout and stores lanes and review state under the configured Workcopy root. Batch review writes Git objects, including a candidate commit, to the source repository's object database. Preparing a review preserves the checked-out branch and its index. The server does not open a network listener, collect credentials, upload source, run builds, or land a batch.",
+  "suggestedPrompts": [
+    "Check Workcopy availability and MCP connectivity without creating a lane.",
+    "Preview an explicitly scoped Workcopy lane for this task.",
+    "Inspect a lane and prepare a human review without integrating it."
+  ],
+  "visualAssets": [],
+  "screenshots": []
+}

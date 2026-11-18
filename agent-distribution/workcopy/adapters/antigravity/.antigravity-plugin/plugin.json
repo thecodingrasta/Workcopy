@@ -1,0 +1,16 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "workcopy",
+  "displayName": "Workcopy",
+  "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review with Workcopy.",
+  "version": "{{VERSION}}",
+  "author": {"name": "Workcopy maintainers"},
+  "homepage": "https://github.com/thecodingrasta/Workcopy",
+  "repository": "https://github.com/thecodingrasta/Workcopy",
+  "license": "GPL-3.0-or-later",
+  "suggestedPrompts": [
+    "Check Workcopy availability and MCP connectivity without creating a lane.",
+    "Preview an explicitly scoped Workcopy lane for this task.",
+    "Inspect a lane and prepare a human review without integrating it."
+  ]
+}

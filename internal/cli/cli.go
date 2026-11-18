@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -157,6 +158,9 @@ func writeResult(stdout, stderr io.Writer, jsonMode bool, report workspace.Repor
 	}
 	if report.Review != nil {
 		fmt.Fprintf(stdout, "Review: %s\nReceipt: %s (%s)\n", report.Review.Path, report.Review.ID, report.Review.State)
+	}
+	if batch := report.Batch; batch != nil {
+		fmt.Fprintf(stdout, "Batch: %s (%s)\nLanes: %s\nTarget: %s\nReview: %s\nBase: %s\nCandidate: %s\n", batch.ID, batch.State, strings.Join(batch.Lanes, ", "), batch.Target, batch.Path, batch.Base, batch.Commit)
 	}
 	if context := report.AgentContext; context != nil {
 		if report.Command == "agent-context" {
@@ -322,6 +326,7 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 		"expand": "project include-files", "status": "", "path": "", "storage": "", "sync": "agent include-files", "list": "", "destroy": "force",
 		"resolve": "use-local use-upstream delete from-file expect-conflict expect-local",
 		"merge":   "commit approve review message no-commit include-files", "content": "side offset limit",
+		"batch-review": "branch from-file include-files", "batch-land": "approve", "batch-recover": "",
 		"recover": "abandon-review", "share": "path target dependency-identity trust-shared", "unshare": "path",
 		"solution": "solution", "discover": "config", "doctor": "", "legacy": "", "settings": "init project-file agent", "agent-context": "refresh agent",
 	}
@@ -359,11 +364,12 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 	repository, root, name := found.repository, found.root, found.name
 	// Usage errors come before anything touches the repository, so a malformed
 	// command is reported the same way from any directory.
+	batchCommand := a.command == "batch-review" || a.command == "batch-land" || a.command == "batch-recover"
 	positional := append([]string(nil), a.positionals...)
-	if a.command != "list" && a.command != "discover" && name == "" && len(positional) > 0 {
+	if !batchCommand && a.command != "list" && a.command != "discover" && name == "" && len(positional) > 0 {
 		name, positional = positional[0], positional[1:]
 	}
-	if a.command != "list" && a.command != "discover" && a.command != "agent-context" && name == "" {
+	if !batchCommand && a.command != "list" && a.command != "discover" && a.command != "agent-context" && name == "" {
 		return empty, usage(errors.New("specify a lane name, --name, or run from inside a Workcopy lane"))
 	}
 	engine, err := workspace.New(ctx, repository, root)
@@ -380,6 +386,37 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 	}
 	dryRun := a.boolean("dry-run")
 	switch a.command {
+	case "batch-review":
+		var resolutions []workspace.BatchResolution
+		if path := a.value("from-file"); path != "" {
+			root, openErr := fsops.OpenRoot(filepath.Dir(path))
+			if openErr != nil {
+				return empty, openErr
+			}
+			defer root.Close()
+			body, readErr := root.ReadFileLimit(filepath.Base(path), model.MaxMetadataBytes)
+			if readErr != nil {
+				return empty, readErr
+			}
+			var document struct {
+				Resolutions []workspace.BatchResolution `json:"resolutions"`
+			}
+			if decodeErr := model.DecodeStrict(body, &document); decodeErr != nil {
+				return empty, usage(decodeErr)
+			}
+			resolutions = document.Resolutions
+		}
+		return engine.PrepareBatchWith(ctx, a.positionals, a.value("branch"), resolutions, dryRun)
+	case "batch-land":
+		if len(a.positionals) != 1 {
+			return empty, usage(errors.New("batch-land takes one batch ID"))
+		}
+		return engine.LandBatch(ctx, a.positionals[0], a.boolean("approve"), dryRun)
+	case "batch-recover":
+		if len(a.positionals) != 1 || dryRun {
+			return empty, usage(errors.New("batch-recover takes one batch ID"))
+		}
+		return engine.RecoverBatch(ctx, a.positionals[0])
 	case "create":
 		if len(positional) != 0 {
 			return empty, usage(errors.New("create takes one lane name; select projects with repeated --project"))
@@ -472,6 +509,9 @@ Usage:
   workcopy path NAME
   workcopy storage NAME
   workcopy sync NAME [--dry-run] [--agent TOOL ...] [--include-files]
+  workcopy batch-review LANE [LANE ...] [--branch REF] [--from-file RESOLUTIONS] [--dry-run] [--include-files]
+  workcopy batch-land BATCH-ID --approve [--dry-run]
+  workcopy batch-recover BATCH-ID
   workcopy resolve NAME PATH --expect-conflict TOKEN
                    (--use-local | --use-upstream | --delete | --from-file FILE)
   workcopy merge NAME [--dry-run] [--include-files]

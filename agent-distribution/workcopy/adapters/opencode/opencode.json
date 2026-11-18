@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "workcopy": {
+        "type": "local",
+        "command": ["workcopy", "mcp"],
+        "codemode": false
+      }
+    }
+  }
+}

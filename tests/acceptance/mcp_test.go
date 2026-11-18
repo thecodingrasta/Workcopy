@@ -28,10 +28,14 @@ func startMCP(t *testing.T, repo, root string) *mcp.ClientSession {
 
 func startMCPArgs(t *testing.T, args ...string) *mcp.ClientSession {
 	t.Helper()
+	return startMCPCommand(t, exec.Command(executable, append([]string{"mcp"}, args...)...))
+}
+
+func startMCPCommand(t *testing.T, cmd *exec.Cmd) *mcp.ClientSession {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 	recordCommand("mcp")
-	cmd := exec.Command(executable, append([]string{"mcp"}, args...)...)
 	cmd.Stderr = os.Stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "workcopy-acceptance", Version: "1"}, nil)
 	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
@@ -40,6 +44,88 @@ func startMCPArgs(t *testing.T, args ...string) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	return session
+}
+
+func TestPluginUninstallPreservesUnmergedLanes(t *testing.T) {
+	for name, config := range map[string]string{
+		"portable":    "plugin/mcp.json",
+		"antigravity": "adapters/antigravity/mcp_config.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := testutil.NewRepository(t)
+			r.Write("A/A.csproj", "<Project/>\n")
+			r.Write("A/source.txt", "committed\n")
+			r.Commit("base")
+			host := filepath.Join(r.Parent, "host-owned-plugin")
+			install := filepath.Join(host, "install")
+			data := filepath.Join(host, "data")
+			filename := filepath.Join("..", "..", "agent-distribution", "workcopy", filepath.FromSlash(config))
+			body, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest struct {
+				MCPServers map[string]struct {
+					Command string   `json:"command"`
+					Args    []string `json:"args"`
+				} `json:"mcpServers"`
+			}
+			if err := json.Unmarshal(body, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			server := manifest.MCPServers["workcopy"]
+			if server.Command != "workcopy" || len(server.Args) == 0 || server.Args[0] != "mcp" {
+				t.Fatalf("unexpected stdio configuration: %+v", server)
+			}
+			launch := func() *mcp.ClientSession {
+				t.Helper()
+				for _, directory := range []string{install, data} {
+					if err := os.MkdirAll(directory, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				expand := strings.NewReplacer("${PLUGIN_ROOT}", install, "${PLUGIN_DATA}", data)
+				args := make([]string, len(server.Args))
+				for i, arg := range server.Args {
+					args[i] = expand.Replace(arg)
+				}
+				cmd := exec.Command(executable, args...)
+				cmd.Dir = install
+				cmd.Env = append(os.Environ(), "PLUGIN_ROOT="+install, "PLUGIN_DATA="+data)
+				return startMCPCommand(t, cmd)
+			}
+			session := launch()
+			boot := mcpCall(t, session, "bootstrap", map[string]any{"directory": r.Path}, 0)
+			created := mcpCall(t, session, "create", map[string]any{
+				"repo": boot.Scope.Repo, "root": boot.Scope.Root, "name": "unfinished",
+				"projects": []string{"A"}, "dryRun": false,
+			}, 0)
+			edit := filepath.Join(created.Report.Workspace.Path, "A", "source.txt")
+			if err := os.WriteFile(edit, []byte("unmerged edit\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := session.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(host); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(edit); err != nil || string(got) != "unmerged edit\n" {
+				t.Fatalf("simulated uninstall lost lane edit: %q, %v", got, err)
+			}
+			session = launch()
+			after := mcpCall(t, session, "bootstrap", map[string]any{"directory": r.Path}, 0)
+			if after.Scope == nil || *after.Scope != *boot.Scope {
+				t.Fatalf("reinstall changed lane scope: before %+v, after %+v", boot.Scope, after.Scope)
+			}
+			status := mcpCall(t, session, "status", map[string]any{
+				"repo": after.Scope.Repo, "root": after.Scope.Root, "name": "unfinished",
+			}, 0)
+			if len(status.Report.Changes) != 1 || status.Report.Changes[0].Path != "A/source.txt" {
+				t.Fatalf("reinstalled plugin lost lane status: %+v", status.Report.Changes)
+			}
+		})
+	}
 }
 
 func TestMCPMultipleRepositoriesAndDirectoryOnboarding(t *testing.T) {

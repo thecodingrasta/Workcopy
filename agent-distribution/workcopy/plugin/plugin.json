@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "workcopy",
+  "version": "0.2.0",
+  "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review with Workcopy.",
+  "author": {"name": "Workcopy maintainers"},
+  "homepage": "https://github.com/thecodingrasta/Workcopy",
+  "repository": "https://github.com/thecodingrasta/Workcopy",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["workcopy", "development lanes", "mcp", "agent skills", "human review"]
+}

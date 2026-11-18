@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "workcopy": {
+      "type": "stdio",
+      "command": "workcopy",
+      "args": ["mcp"]
+    }
+  }
+}

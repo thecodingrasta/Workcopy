@@ -44,7 +44,7 @@ type Plan struct {
 	Action string   `json:"action"`
 	Files  []string `json:"files"`
 	// FileCount is how many files the plan covers. It is set for the plans that
-	// list files (create, expand, sync) so a caller that is not given the list
+	// list files so a caller that is not given the list
 	// still knows its size.
 	FileCount int `json:"fileCount,omitempty"`
 	// FilesOmitted is true when Files was left out to keep the output small; the
@@ -57,7 +57,7 @@ type Plan struct {
 // Inventory reports whether the plan lists files, as opposed to naming the one
 // lane or path a command acts on.
 func (p *Plan) Inventory() bool {
-	return p != nil && (p.Action == "create" || p.Action == "expand" || p.Action == "sync")
+	return p != nil && (p.Action == "create" || p.Action == "expand" || p.Action == "sync" || p.Action == "batch-review")
 }
 
 type Content struct {
@@ -79,6 +79,8 @@ type Report struct {
 	Changes       []Change         `json:"changes,omitempty"`
 	Conflicts     []model.Conflict `json:"conflicts,omitempty"`
 	Review        *model.Review    `json:"review,omitempty"`
+	Batch         *BatchReview     `json:"batch,omitempty"`
+	BatchConflict *BatchConflict   `json:"batchConflict,omitempty"`
 	Workspaces    []WorkspaceView  `json:"workspaces,omitempty"`
 	Warnings      []string         `json:"warnings,omitempty"`
 	NextCommands  []string         `json:"nextCommands,omitempty"`

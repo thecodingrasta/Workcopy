@@ -12,12 +12,12 @@ CI runs formatting, vet, race tests, real CLI/MCP workflows, selected .NET and o
 
 ```sh
 go run ./tools/dev clean
-go run ./tools/dev package v0.1.0-rc.1
+go run ./tools/dev package "$tag"
 ```
 
-Use the actual candidate version. Add `--native` to package only the current OS/architecture. Packaging requires the pinned patched Go release (1.27.4 or newer).
+Set `tag` to the reviewed release tag. Full release packaging checks its version against the Git-source plugin manifests before writing any outputs. The developer and CI option `--native` packages only the current OS/architecture and can use a temporary candidate version. Packaging requires the pinned patched Go release (1.27.4 or newer). See the [version and rollback rules](AGENT_PLUGIN_PUBLICATION.md#version-and-rollback-rules) when updating the plugin version.
 
-The task produces six directly runnable per-platform binaries, a matching `_source.tar.gz` archive and `dist/SHA256SUMS`. Binary names are `workcopy_<version>_<os>_<arch>` with `.exe` on Windows. The source archive includes public source, build scripts, pinned vendored module source and compiler information. Vendoring happens in a private disposable copy; it does not change the repository or global caches. Packaging can download pinned modules when they are absent; use an approved cache for offline builds.
+The task produces six directly runnable per-platform binaries, a matching `_source.tar.gz` archive, and `dist/SHA256SUMS`. It also produces the agent plugin ZIPs and `dist/AGENT_PLUGIN_SHA256SUMS`. Binary names are `workcopy_<version>_<os>_<arch>` with `.exe` on Windows. The source archive includes public source, build scripts, pinned vendored module source and compiler information. Vendoring happens in a private disposable copy. Use an approved cache for offline builds.
 
 All binary downloads retain Workcopy's GPL notice through the corresponding source release. Publish the source archive and checksums alongside the bare binaries. Never substitute a source archive from another commit. The source archive rebuilds with `-mod=vendor`; its `BUILDINFO.txt` records the version and command.
 
