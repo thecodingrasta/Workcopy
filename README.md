@@ -8,26 +8,26 @@
 [![Go 1.27+](https://img.shields.io/badge/source-Go%201.27%2B-00ADD8.svg)](go.mod)
 [![MCP](https://img.shields.io/badge/MCP-stdio-6750A4.svg)](docs/mcp.md)
 
-Workcopy copies committed source into a plain folder called a **lane**. No `.git` inside it, so nothing can reset a branch, corrupt an index or push anywhere. Edit, build and test there. Workcopy prepares reviews in a separate folder while you keep working in your checkout. After you approve a combined review, Workcopy can land the selected lanes on your local branch.
+Workcopy copies committed source into a plain folder called a **lane**. By default there is no `.git` inside it, so nothing can reset a branch, corrupt an index, or push anywhere. If you want local diff/commit tracking inside a lane, pass `--git` (`git: true` in MCP) to initialize a standalone local `.git` with no remotes and no link to your main repository. Edit, build, and test inside the lane. Reviews are worktree-free by default (with `--worktree` available if you want an on-disk review folder), and after you approve a combined review, Workcopy can land the selected lanes on your local branch.
 
 ## Why it exists
 
-Letting an agent run loose in your actual repository is risky: one bad `git reset` or branch switch and you've got a mess. A full `git clone` per worker is safe but wasteful on a big monorepo, and still gives every worker real Git access to misuse.
+Letting an agent run loose in your actual repository is risky: one bad `git reset` or branch switch and you've got a mess. A full `git clone` per worker is safe but wasteful on a big monorepo, and `git worktree` still links directly to your main `.git` directory and locks branches.
 
-Workcopy sits in between. It creates a lane from the last commit, not your uncommitted edits, copies only the projects a task needs, and hands back a Git-free folder. Work happens there. Reconciliation against upstream changes and the final review are separate steps you control.
+Workcopy sits in between. It creates a lane from the last commit (not your uncommitted edits), copies only the projects a task needs, and hands back an isolated folder—Git-free by default, or with an isolated local `.git` when you pass `--git`. Work happens there. Reconciliation against upstream changes and the final review are separate steps you control.
 
 ## Workcopy vs. `git worktree`
 
 | | `git worktree` | Workcopy lane |
 | --- | --- | --- |
-| Contains `.git` | Yes, full Git checkout | No, never |
-| Branch locking | Can't check out a branch already in use elsewhere | None, lanes aren't checkouts |
+| Contains `.git` | Yes, linked to main `.git` | No by default; optional standalone local `.git` with `--git` (never a worktree) |
+| Branch locking | Can't check out a branch already in use elsewhere | None, lanes aren't linked checkouts |
 | What gets copied | Entire working tree for the branch | Only the projects you select |
-| Review step | None built in | Separate unstaged review, prepared automatically |
-| Agent risk | Can still run destructive Git commands | No Git commands available at all |
+| Review step | None built in | Worktree-free review by default (`--worktree` optional) |
+| Agent risk | Can affect main branches, refs, or repo state | Isolated from main `.git`; no remotes |
 | Best for | One trusted developer, one extra branch | Several workers, human or AI, on one codebase |
 
-Both tools write a full copy of selected files to disk, and both duplicate build output (`bin`, `obj`, `node_modules`) per working copy. Workcopy doesn't deduplicate that either. The real difference is that a worktree is still Git; a lane simply isn't, so there's nothing for a runaway agent to break.
+Both tools write a copy of selected files to disk, and both duplicate build output (`bin`, `obj`, `node_modules`) per working copy. Workcopy doesn't deduplicate that either. The real difference is isolation: even with `--git`, a lane's `.git` has no remotes and no link to your main repository, so a runaway agent cannot corrupt your main branches or push anywhere.
 
 What actually keeps disk use down with Workcopy is **project selection**: on a monorepo, a lane only copies the projects a task needs, not the whole tree. Build output and package caches are not deduplicated by either tool.
 
@@ -117,7 +117,7 @@ workcopy sync
 workcopy merge
 ```
 
-`sync` catches you up with upstream changes and flags conflicts to fix before re-running `merge`. `merge` doesn't commit anything; it prints the path to a separate review folder. Inspect that diff yourself before deciding whether to bring it in. See the [workflow guide](docs/workflow.md) for approval, recovery and cleanup.
+`sync` catches you up with upstream changes and flags conflicts to fix before re-running `merge`. `merge` doesn't commit anything; by default it prepares a worktree-free review receipt (pass `--worktree` if you want an unstaged review folder on disk). Inspect the changes yourself before deciding whether to bring them in. See the [workflow guide](docs/workflow.md) for approval, recovery and cleanup.
 
 ## Review and merge several lanes
 
@@ -147,6 +147,7 @@ Build and test inside the lane. Workcopy doesn't run scripts or install packages
 ## Safety and support
 
 - Lanes are workflow boundaries, not security sandboxes. Use host/OS permissions when real isolation matters.
+- Workcopy refuses to create lanes inside temporary directories (`/tmp`, `%TEMP%`, `AppData\Local\Temp`) unless explicitly approved with `--allow-temp-root` (`allowTempRoot: true` in MCP), so unmerged work isn't lost to temp cleanup.
 - `destroy` protects uncommitted contributions and conflicts. `--force` discards your own changes, never shared targets.
 - Local filesystems only. Network shares and cloud-synced folders aren't supported. Under WSL, a repository on `/mnt/c` is slow with the Linux build because every file call crosses to Windows: keep lane storage on the WSL filesystem (`WORKCOPY_ROOT`; about 12 times faster), or use the Windows build. [Which setup to use, what it costs and why](docs/wsl.md).
 - Git filters, LFS, submodules, tracked files over the `WORKCOPY_MAX_FILE_MIB` limit (default 2 GiB; files over 64 MiB are streamed, never loaded whole), and repos over 100,000 tracked paths are rejected explicitly, as are tracked paths that cannot be written safely on every platform (reserved Windows names, `:`, trailing dots, `.git`). Each refusal names the path and the fix, and happens before anything is written ([refusals](docs/troubleshooting.md#create-is-refused)).
