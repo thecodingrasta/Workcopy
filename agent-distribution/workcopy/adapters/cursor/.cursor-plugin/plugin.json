@@ -1,6 +1,6 @@
 {
   "name": "workcopy",
-  "version": "0.2.0",
+  "version": "0.2.4a",
   "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review with Workcopy.",
   "author": {"name": "Workcopy maintainers"},
   "license": "GPL-3.0-or-later",

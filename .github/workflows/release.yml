@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([a-z]+)?(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error title=Invalid version::The version input is not a release tag. Use the form v0.1.5 or v0.1.5-rc.1."
             exit 1
           fi

@@ -25,6 +25,12 @@ go run ./tools/dev format
 go run ./tools/dev validate
 ```
 
+**Mandatory for versioned/release commits:** Before committing a release or generating a versioned commit message for `vX.Y.Z`, update `"defaultVersion"` in `agent-distribution/workcopy/agentdist.json` and `"version"` in `agent-distribution/workcopy/plugin/plugin.json`, `agent-distribution/workcopy/adapters/claude-code/.claude-plugin/plugin.json`, and `agent-distribution/workcopy/adapters/cursor/.cursor-plugin/plugin.json` to `X.Y.Z`, and verify with:
+
+```sh
+go run ./tools/agentdist validate --release-version X.Y.Z
+```
+
 Validation checks formatting, runs `go vet`, executes the race-enabled suite, builds the CLI and checks its help, version and diagnostics. A C compiler is required for the race detector. `go run ./tools/dev test` runs the non-race suite, but does not replace full validation for a release.
 
 ## Code rules

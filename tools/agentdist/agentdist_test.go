@@ -593,7 +593,7 @@ func TestDistributionVersionRejectsPathAndShellSyntax(t *testing.T) {
 			t.Errorf("accepted unsafe distribution version %q", version)
 		}
 	}
-	for _, version := range []string{"0.1.5", "1.2.3-rc.1"} {
+	for _, version := range []string{"0.1.5", "0.2.4a", "1.2.3-rc.1"} {
 		if !validDistributionVersion(version) {
 			t.Errorf("rejected valid distribution version %q", version)
 		}

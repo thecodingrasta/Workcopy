@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "defaultVersion": "0.2.0",
+  "defaultVersion": "0.2.4a",
   "license": "GPL-3.0-or-later",
   "pluginRoot": "plugin",
   "skillsRoot": "plugin/skills",

@@ -97,7 +97,7 @@ func TestReleaseVersionRejectsShellAndPathSyntax(t *testing.T) {
 			t.Error("accepted", value)
 		}
 	}
-	for _, value := range []string{"v0.1.0", "v1.2.3-rc.1"} {
+	for _, value := range []string{"v0.1.0", "v0.2.4a", "v1.2.3-rc.1"} {
 		if !validVersion(value) {
 			t.Error("rejected", value)
 		}

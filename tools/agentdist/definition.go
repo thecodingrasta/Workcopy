@@ -12,7 +12,7 @@ import (
 
 const defaultDefinitionPath = "agent-distribution/workcopy/agentdist.json"
 
-var distributionVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
+var distributionVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([a-z]+)?(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
 var targetIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var mcpToolPrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*_$`)
 var mcpToolSuffixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)

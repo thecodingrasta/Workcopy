@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "workcopy",
-  "version": "0.2.0",
+  "version": "0.2.4a",
   "description": "Manage explicitly scoped, Git-free development lanes and prepare changes for human review with Workcopy.",
   "author": {"name": "Workcopy maintainers"},
   "homepage": "https://github.com/thecodingrasta/Workcopy",

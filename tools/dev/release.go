@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
+var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([a-z]+)?(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
 var assetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_(linux|windows|darwin)_(amd64|arm64)(\.exe)?$`)
 var sourceAssetName = regexp.MustCompile(`^workcopy_v[0-9A-Za-z.-]+_source\.tar\.gz$`)
 var agentPluginAssetName = regexp.MustCompile(`^workcopy_agent_[a-z0-9-]+_v[0-9A-Za-z.-]+\.zip$`)
