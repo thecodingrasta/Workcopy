@@ -48,7 +48,7 @@ func TestLaneServesTheAgentsChosenAtCreationAndKeepsThem(t *testing.T) {
 	e := contextEngine(t, r, nil)
 	all := []string{".kiro/steering/product.md", "CLAUDE.md", ".claude/agents/reviewer.md", ".codex/prompts/p.md", ".cursor/rules/style.mdc", ".gemini/GEMINI.md", ".opencode/agent/build.md"}
 
-	created, err := e.Create(ctx, "kiro-lane", CreateOptions{All: true, Agents: []string{"kiro"}}, false)
+	created, err := e.Create(ctx, "kiro-lane", CreateOptions{AllowTempRoot: true, All: true, Agents: []string{"kiro"}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestMCPClientDecidesTheAgentUnlessTheOwnerOrCallerChooses(t *testing.T) {
 				t.Fatalf("preview: agents=%v source=%q client=%q", got.Agents, got.AgentsSource, got.Client)
 			}
 			// Creating a lane in the same call applies exactly what the preview promised.
-			created, err := e.Create(ctx, "lane", CreateOptions{All: true, Agents: c.agents}, false)
+			created, err := e.Create(ctx, "lane", CreateOptions{AllowTempRoot: true, All: true, Agents: c.agents}, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +163,7 @@ func TestLaneWithoutARecordKeepsEveryTool(t *testing.T) {
 	ctx := context.Background()
 	r := multiAgentRepository(t)
 	e := contextEngine(t, r, nil)
-	if _, err := e.Create(ctx, "old", CreateOptions{All: true, Agents: []string{"kiro"}}, false); err != nil {
+	if _, err := e.Create(ctx, "old", CreateOptions{AllowTempRoot: true, All: true, Agents: []string{"kiro"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	opened, err := e.openLane("old")
@@ -217,7 +217,7 @@ func TestOwnerOptedInConfigurationFollowsTheLaneContractAndMarksSecrets(t *testi
 		settings.AgentContextConfig:  ".kiro/settings/mcp.json;.tools/settings.ini;.tools/.env;.tools/id_rsa",
 		settings.AgentContextSecrets: ".tools/.env;.tools/id_rsa",
 	})
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestOwnerOptedInConfigurationFollowsTheLaneContractAndMarksSecrets(t *testi
 		t.Fatalf("the commit must hold source only:\n%s", tree)
 	}
 	// A lane with no source edits is destroyed without --force: the copies are disposable.
-	second, err := e.Create(ctx, "second", CreateOptions{All: true}, false)
+	second, err := e.Create(ctx, "second", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

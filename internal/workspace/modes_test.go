@@ -79,7 +79,7 @@ func TestLaneOnFilesystemThatReportsEveryFileExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestRepositoryFileModeSettingDisablesExecuteBitTracking(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+		created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 		if err != nil {
 			t.Fatal(err)
 		}

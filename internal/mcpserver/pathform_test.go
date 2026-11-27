@@ -48,7 +48,7 @@ func TestWSLSpellingIsAcceptedAndAnsweredInKind(t *testing.T) {
 		t.Fatalf("test needs a drive-letter path, got %q", second.Path)
 	}
 
-	created := call(t, session, "create", map[string]any{"repo": wslRepo, "root": wslRoot, "name": "worker", "projects": []string{"A"}, "dryRun": false})
+	created := call(t, session, "create", map[string]any{"repo": wslRepo, "root": wslRoot, "name": "worker", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if created.ExitCode != 0 {
 		t.Fatalf("create through the WSL spelling: %+v", created.Error)
 	}

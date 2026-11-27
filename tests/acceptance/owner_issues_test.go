@@ -21,6 +21,20 @@ import (
 func run(t *testing.T, directory string, environment []string, arguments ...string) (string, string, int) {
 	t.Helper()
 	recordCommand(arguments...)
+	if len(arguments) > 0 && arguments[0] == "create" {
+		hasHelp, hasAllow := false, false
+		for _, arg := range arguments[1:] {
+			if arg == "--help" || arg == "-h" {
+				hasHelp = true
+			}
+			if arg == "--allow-temp-root" {
+				hasAllow = true
+			}
+		}
+		if !hasHelp && !hasAllow {
+			arguments = append(append([]string{}, arguments...), "--allow-temp-root")
+		}
+	}
 	// Generous: a large repository on a 9p mount (WSL drvfs) takes over a minute per
 	// command when the machine is busy. This only bounds a hang.
 	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
@@ -124,7 +138,7 @@ func TestOwnerReportedIssuesThroughTheRealBinary(t *testing.T) {
 	}
 
 	// WC-013: merge --json stays small unless the inventory is requested.
-	out, _, code = run(t, lane, nil, "merge", "--json")
+	out, _, code = run(t, lane, nil, "merge", "--worktree", "--json")
 	if code != 0 {
 		t.Fatalf("merge: %d %s", code, out)
 	}
@@ -136,7 +150,7 @@ func TestOwnerReportedIssuesThroughTheRealBinary(t *testing.T) {
 		t.Fatalf("WC-013: review.files must be omitted: %v %s", err, out)
 	}
 	reviewPath := slim.Review.Path
-	out, _, code = run(t, lane, nil, "merge", "--include-files", "--json")
+	out, _, code = run(t, lane, nil, "merge", "--worktree", "--include-files", "--json")
 	var full workspace.Report
 	if code != 0 || json.Unmarshal([]byte(out), &full) != nil || full.Review == nil || len(full.Review.Files) < 2 {
 		t.Fatalf("WC-013: --include-files must list the files: %d %s", code, out)

@@ -144,7 +144,7 @@ func TestDocumentedCLIConflictReviewAndIntegration(t *testing.T) {
 	if len(status.Changes) == 0 {
 		t.Fatal("resolved work lost from promotion accounting")
 	}
-	review := invoke(t, lane, 0, "merge", "--no-commit")
+	review := invoke(t, lane, 0, "merge", "--worktree", "--no-commit")
 	mainBefore := r.Git("rev-parse", "HEAD")
 	committed := invoke(t, lane, 0, "merge", "--commit", "--approve", "--review", review.Review.ID, "--message", "Reviewed contribution")
 	if r.Git("rev-parse", "HEAD") != mainBefore {
@@ -280,7 +280,7 @@ func TestLargeMonorepoSupportsThreeIndependentAgentLanes(t *testing.T) {
 		if len(status.Changes) != 1 || status.Changes[0].Path != agent.file {
 			t.Fatalf("%s changes escaped its assigned project: %+v", agent.name, status.Changes)
 		}
-		review := invoke(t, lane, 0, "merge", "--no-commit")
+		review := invoke(t, lane, 0, "merge", "--worktree", "--no-commit")
 		if review.Review == nil || review.Review.Commit != "" {
 			t.Fatalf("%s merge did not prepare an uncommitted review: %+v", agent.name, review.Review)
 		}

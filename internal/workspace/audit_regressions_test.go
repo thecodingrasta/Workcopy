@@ -38,7 +38,7 @@ func TestTenOfTwentyFiveProfileAndRepeatedExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatal("open fixture repository:", err)
 	}
-	created, err := e.Create(context.Background(), "task", CreateOptions{}, false)
+	created, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestSharingRejectsAncestorContainingLanes(t *testing.T) {
 func TestUntrackedFilesInReviewBlockApproval(t *testing.T) {
 	_, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644)
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestUntrackedFilesInReviewBlockApproval(t *testing.T) {
 func TestAttachedReviewHEADCannotModifyMain(t *testing.T) {
 	r, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644)
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSourceSymlinksArePreservedButEscapingLinksAreRejected(t *testing.T) {
 	}
 	r.Commit("link")
 	e, _ := New(context.Background(), r.Path, filepath.Join(r.Parent, "lanes"))
-	report, err := e.Create(context.Background(), "task", CreateOptions{All: true}, false)
+	report, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestSourceSymlinksArePreservedButEscapingLinksAreRejected(t *testing.T) {
 	}
 	os.Symlink("../outside", filepath.Join(r.Path, "escape"))
 	r.Commit("escaping link")
-	if _, err = e.Create(context.Background(), "bad", CreateOptions{All: true}, false); err == nil {
+	if _, err = e.Create(context.Background(), "bad", CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 		t.Fatal("escaping source link accepted")
 	}
 }
@@ -336,7 +336,7 @@ func TestNoUnexpectedTransactionJunkAfterSuccessfulCreate(t *testing.T) {
 func TestExplicitConfigRequiresSchemaVersion(t *testing.T) {
 	r, e, _ := fixtureLane(t)
 	r.Write("empty.json", `{}`)
-	_, err := e.Create(context.Background(), "second", CreateOptions{ConfigPath: filepath.Join(r.Path, "empty.json")}, true)
+	_, err := e.Create(context.Background(), "second", CreateOptions{AllowTempRoot: true, ConfigPath: filepath.Join(r.Path, "empty.json")}, true)
 	if err == nil {
 		t.Fatal("missing schema accepted")
 	}

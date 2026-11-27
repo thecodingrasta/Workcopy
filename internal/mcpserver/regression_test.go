@@ -81,13 +81,13 @@ func callWithToken(t *testing.T, session *mcp.ClientSession, name string, args a
 // advance; one that does not gets no notifications.
 func TestLongOperationsReportProgressOnlyWhenAsked(t *testing.T) {
 	session, _, events := connectWithProgress(t, Options{})
-	if out := callWithToken(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
+	if out := callWithToken(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
 		t.Fatalf("create: %+v", out.Error)
 	}
 	if err := os.WriteFile(filepath.Join(sessionLanePath(t, session, "worker"), "A", "a.txt"), []byte("changed\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if out := callWithToken(t, session, "review", Mutation{Lane: Lane{Name: "worker"}}); out.ExitCode != 0 {
+	if out := callWithToken(t, session, "review", ReviewInput{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Worktree: true}); out.ExitCode != 0 {
 		t.Fatalf("review: %+v", out.Error)
 	}
 	seen := map[string]bool{}
@@ -152,7 +152,7 @@ func TestToolTimeoutFlagIsBounded(t *testing.T) {
 // cannot be led into deleting anything else.
 func TestMissingLaneIsVisibleAndClearableOverMCP(t *testing.T) {
 	session, _, _ := connect(t, Options{})
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
 	if created.ExitCode != 0 {
 		t.Fatal(created.Error)
 	}
@@ -258,7 +258,7 @@ func TestCommandReadsThePersistentSettings(t *testing.T) {
 // reports a missing lane as an ordinary failure, and changes nothing.
 func TestStorageToolReportsALaneAndIsReadOnly(t *testing.T) {
 	session, _, _ := connect(t, Options{})
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	if created.ExitCode != 0 {
 		t.Fatal(created)
 	}

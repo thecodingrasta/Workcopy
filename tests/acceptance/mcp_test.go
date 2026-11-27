@@ -190,6 +190,18 @@ func TestMCPMultipleRepositoriesAndDirectoryOnboarding(t *testing.T) {
 }
 func mcpCall(t *testing.T, session *mcp.ClientSession, tool string, args any, want int) mcpserver.Output {
 	t.Helper()
+	if tool == "create" {
+		if m, ok := args.(map[string]any); ok {
+			if _, has := m["allowTempRoot"]; !has {
+				copyMap := make(map[string]any, len(m)+1)
+				for k, v := range m {
+					copyMap[k] = v
+				}
+				copyMap["allowTempRoot"] = true
+				args = copyMap
+			}
+		}
+	}
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "workcopy_" + tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("%s: %v", tool, err)
@@ -317,7 +329,7 @@ func TestMCPThreeWorkersValidateAndHandOffReviews(t *testing.T) {
 		if len(status.Report.Changes) != 1 {
 			t.Fatal("lost contribution", status.Report)
 		}
-		review := mcpCall(t, session, "review", map[string]any{"name": name, "dryRun": false}, 0)
+		review := mcpCall(t, session, "review", map[string]any{"name": name, "worktree": true, "dryRun": false}, 0)
 		if review.Report.Review == nil || review.Report.Review.State != "prepared" {
 			t.Fatal("review missing")
 		}

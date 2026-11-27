@@ -46,7 +46,7 @@ func TestReviewWarnsWhenGitForWindowsCannotReadItsPaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lane, "README.md"), []byte("changed\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	review := laneReport(t, lane, nil, 0, "merge")
+	review := laneReport(t, lane, nil, 0, "merge", "--worktree")
 	longest := 0
 	_ = filepath.WalkDir(review.Review.Path, func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && len(p) > longest {

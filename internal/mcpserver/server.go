@@ -69,8 +69,9 @@ type Output struct {
 	Pages         map[string]PageInfo `json:"pages,omitempty"`
 }
 type Scope struct {
-	Repo string `json:"repo,omitempty" jsonschema:"Absolute source checkout path; defaults to startup repository when configured"`
-	Root string `json:"root,omitempty" jsonschema:"Exact absolute lane root; use returned scope for subsequent calls"`
+	Repo     string `json:"repo,omitempty" jsonschema:"Absolute source checkout path; defaults to startup repository when configured"`
+	Root     string `json:"root,omitempty" jsonschema:"Exact absolute lane root; use returned scope for subsequent calls"`
+	WorkRoot string `json:"workRoot,omitempty" jsonschema:"Alias for root: exact absolute lane root"`
 }
 type Empty struct {
 	Page
@@ -94,8 +95,13 @@ type BatchInput struct {
 	Empty
 	Names       []string                    `json:"names" jsonschema:"Selected registered lanes in integration order"`
 	Branch      string                      `json:"branch,omitempty" jsonschema:"Local target branch, defaulting to the current branch"`
+	Worktree    bool                        `json:"worktree,omitempty" jsonschema:"Materialize an optional separate review worktree on disk (not needed for batch-land)"`
 	DryRun      bool                        `json:"dryRun" jsonschema:"Estimate storage without preparing a review"`
 	Resolutions []workspace.BatchResolution `json:"resolutions,omitempty" jsonschema:"Explicit resolutions for current batch conflict tokens"`
+}
+type ReviewInput struct {
+	Mutation
+	Worktree bool `json:"worktree,omitempty" jsonschema:"Materialize an optional separate unstaged review worktree on disk (default false: worktree-free review)"`
 }
 
 // ContextInput selects a lane for agent_context; without a name it previews the
@@ -115,10 +121,12 @@ type RefreshInput struct {
 }
 type Create struct {
 	Mutation
-	Branch   string   `json:"branch,omitempty"`
-	Profile  string   `json:"profile,omitempty"`
-	Projects []string `json:"projects,omitempty"`
-	Agents   []string `json:"agents,omitempty" jsonschema:"Agent tools whose instruction files this lane receives, for example kiro, codex, claude, gemini, opencode, cursor, or all. Omit to use the owner setting; the default follows the MCP client and includes every known tool when it is not recognised"`
+	Branch        string   `json:"branch,omitempty"`
+	Profile       string   `json:"profile,omitempty"`
+	Projects      []string `json:"projects,omitempty"`
+	Agents        []string `json:"agents,omitempty" jsonschema:"Agent tools whose instruction files this lane receives, for example kiro, codex, claude, gemini, opencode, cursor, or all. Omit to use the owner setting; the default follows the MCP client and includes every known tool when it is not recognised"`
+	AllowTempRoot bool     `json:"allowTempRoot,omitempty" jsonschema:"Allow creating a lane inside a temporary directory ONLY when the user has explicitly agreed to it"`
+	Git           bool     `json:"git,omitempty" jsonschema:"Initialize an isolated standalone local .git repository inside the lane (never a worktree or remote) to track lane-local edits"`
 }
 type Expand struct {
 	Mutation
@@ -225,7 +233,7 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		if err != nil {
 			return s.result(workspace.Report{}, err, in.Page), nil
 		}
-		options := workspace.CreateOptions{Branch: in.Branch, Profile: in.Profile, Projects: in.Projects, ConfigData: s.configData, ExpectedCommit: commit, Agents: in.Agents}
+		options := workspace.CreateOptions{Branch: in.Branch, Profile: in.Profile, Projects: in.Projects, ConfigData: s.configData, ExpectedCommit: commit, Agents: in.Agents, AllowTempRoot: in.AllowTempRoot, LocalGit: in.Git}
 		r, e := s.engine.Create(ctx, in.Name, options, true)
 		if e == nil && !in.DryRun {
 			e = s.admit(ctx, r.Plan.SourceBytes, len(r.Plan.Files), true)
@@ -264,17 +272,20 @@ func New(engine *workspace.Engine, version string, opts Options) *Server {
 		r, e := s.engine.Content(ctx, in.Name, in.Token, in.Side, in.ByteOffset, in.ByteLimit)
 		return s.result(r, e, in.Page), nil
 	})
-	add(s, "review", "Prepare a separate unstaged human review worktree. Full repository source consumes disk. Does not commit, push or integrate.", false, func(ctx context.Context, s *Server, in Mutation) (Output, error) {
-		if !in.DryRun {
+	add(s, "review", "Prepare a worktree-free human review by default (pass worktree=true only if an on-disk review worktree is wanted). Does not commit, push or integrate.", false, func(ctx context.Context, s *Server, in ReviewInput) (Output, error) {
+		if !in.DryRun && in.Worktree {
 			if e := s.admitReview(ctx, in.Name); e != nil {
 				return s.result(workspace.Report{}, e, in.Page), nil
 			}
 		}
-		r, e := s.engine.Merge(ctx, in.Name, workspace.MergeOptions{}, in.DryRun)
+		r, e := s.engine.Merge(ctx, in.Name, workspace.MergeOptions{Worktree: in.Worktree}, in.DryRun)
 		return s.result(r, e, in.Page), nil
 	})
-	add(s, "batch_review", "Prepare one isolated combined review of the selected lanes against a local branch. Landing requires separate explicit approval.", false, func(ctx context.Context, s *Server, in BatchInput) (Output, error) {
-		r, e := s.engine.PrepareBatchWithAdmission(ctx, in.Names, in.Branch, in.Resolutions, in.DryRun, func(plan workspace.Plan) error {
+	add(s, "batch_review", "Prepare one isolated combined review of the selected lanes against a local branch (worktree-free by default; pass worktree=true only if an on-disk review worktree is wanted). Landing requires separate explicit approval.", false, func(ctx context.Context, s *Server, in BatchInput) (Output, error) {
+		r, e := s.engine.PrepareBatchWithOptions(ctx, in.Names, in.Branch, in.Resolutions, in.Worktree, in.DryRun, func(plan workspace.Plan) error {
+			if !in.Worktree {
+				return nil
+			}
 			return s.admit(ctx, plan.SourceBytes, plan.FileCount, false)
 		})
 		return s.result(r, e, in.Page), nil

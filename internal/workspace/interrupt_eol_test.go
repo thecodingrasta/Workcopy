@@ -43,7 +43,7 @@ func TestInterruptedCreationRecoversWhenFilesNeedLineEndingConversion(t *testing
 	for _, cutAt := range []int{1, 90, 300} {
 		name := fmt.Sprintf("cut%d", cutAt)
 		ctx, cancel := cancelAfter(cutAt)
-		if _, err = e.Create(ctx, name, CreateOptions{All: true}, false); err == nil {
+		if _, err = e.Create(ctx, name, CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 			cancel()
 			t.Fatalf("%s: the interrupted creation must report failure", name)
 		}
@@ -85,7 +85,7 @@ func TestRecoveredCreationLeavesNoTemporaryFilesInStatus(t *testing.T) {
 	}
 	ctx, cancel := cancelAfter(150)
 	defer cancel()
-	if _, err = e.Create(ctx, "task", CreateOptions{All: true}, false); err == nil {
+	if _, err = e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 		t.Fatal("the interrupted creation must report failure")
 	}
 	// A process killed inside an atomic write leaves its temporary file in the\n\t// directory it was writing to, so the strays go where this journal writes.
@@ -141,7 +141,7 @@ func TestCancelledCreateReportsTheCancellationNotAnOSError(t *testing.T) {
 	for _, cutAt := range []int{1, 64, 256} {
 		name := fmt.Sprintf("cancel%d", cutAt)
 		ctx, cancel := cancelAfter(cutAt)
-		_, err = e.Create(ctx, name, CreateOptions{All: true}, false)
+		_, err = e.Create(ctx, name, CreateOptions{AllowTempRoot: true, All: true}, false)
 		cancel()
 		if err == nil {
 			t.Fatalf("%s: the cut-off creation must fail", name)
@@ -160,7 +160,7 @@ func TestCancelledCreateReportsTheCancellationNotAnOSError(t *testing.T) {
 	ctx, stop := context.WithTimeout(background, time.Nanosecond)
 	defer stop()
 	<-ctx.Done()
-	if _, err = e.Create(ctx, "deadline", CreateOptions{All: true}, false); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	if _, err = e.Create(ctx, "deadline", CreateOptions{AllowTempRoot: true, All: true}, false); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("an expired deadline must surface as DeadlineExceeded: %v", err)
 	}
 }

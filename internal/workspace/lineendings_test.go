@@ -78,7 +78,7 @@ func TestLaneMirrorsTheRepositoriesCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestLineEndingRewritesNeitherChangeNorConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestReviewAndCommitCarryOnlyTheRealChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestReviewAndCommitCarryOnlyTheRealChange(t *testing.T) {
 	writeLane(t, lane, "app/New.cs", "class New\r\n{\r\n}\r\n")
 	writeLane(t, lane, "new.dat", "p\r\nq\r\n")
 
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestLaneFollowsCoreAutoCRLF(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+		created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 		if err != nil {
 			t.Fatal(err)
 		}

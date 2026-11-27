@@ -32,6 +32,12 @@ type CreateOptions struct {
 	// Agents selects the agent tools this lane serves (keys, "all" or "auto").
 	// Empty uses the owner's setting, where "auto" follows the MCP client.
 	Agents []string
+	// AllowTempRoot permits creating a lane inside a temporary directory ONLY
+	// when the user has explicitly agreed to it.
+	AllowTempRoot bool
+	// LocalGit initializes an isolated standalone local .git repository inside
+	// the lane (never a worktree or remote) to track lane-local edits.
+	LocalGit bool
 }
 
 // entryVersion describes a committed blob as a lane file. rule is the unresolved
@@ -133,6 +139,16 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 	if err := validateAgents(options.Agents); err != nil {
 		return report, err
 	}
+	if !options.AllowTempRoot {
+		if isTemp, tempRoot := IsTempDirectory(e.WorkRoot); isTemp {
+			return report, &model.Failure{
+				Exit:       3,
+				Code:       "temp-work-root-refused",
+				Message:    fmt.Sprintf("Refusing to create lane %q inside temporary directory %s (matched %s): temporary directories can be wiped before work is merged, losing changes.", name, e.WorkRoot, tempRoot),
+				Suggestion: "Choose a persistent lane root outside temp (for example C:\\workcopy-lanes or ~/workcopy-lanes), or pass --allow-temp-root / allowTempRoot=true ONLY if the user has explicitly agreed to a temporary lane.",
+			}
+		}
+	}
 	if options.All && (options.Profile != "" || len(options.Projects) > 0) {
 		return report, model.Fail(2, "ambiguous-selection", "--all cannot be combined with --profile or --project")
 	}
@@ -189,6 +205,9 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		return report, model.Fail(2, "unused-sharing-options", "Sharing options belong to the share command")
 	}
 	if dryRun {
+		if options.LocalGit {
+			report.Plan.Effects = append(report.Plan.Effects, "Initialize an isolated standalone local .git repository inside the lane (never a worktree or remote)")
+		}
 		if e.contextPolicy().Enabled {
 			if preview, _, previewErr := e.contextPlan(ctx, nil, e.selectAgents(ctx, nil, options.Agents)); previewErr == nil && len(preview.Files) > 0 {
 				report.Plan.Effects = append(report.Plan.Effects, fmt.Sprintf("Copy %d agent instruction files (%d bytes) from the main checkout", len(preview.Files), preview.TotalBytes))
@@ -232,7 +251,7 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 		creationSelection = e.selectAgents(ctx, nil, options.Agents)
 		contextAgents = recordSelection(creationSelection)
 	}
-	next := model.Snapshot{Manifest: model.Manifest{ContextAgents: contextAgents, SchemaVersion: 1, ID: id, Name: name, WorkspacePath: destination, RepositoryRoot: e.Repository.Root, CommonGitDir: e.Repository.CommonDir, WorkRoot: e.WorkRoot, Branch: branch, SyncedCommit: commit, Generation: 2, Phase: "ready", RespectExecutableBits: respect, OwnerConfig: options.ConfigData != nil || options.ConfigPath != "", Config: config, Selection: selection}, Baseline: model.Baseline{Files: map[string]model.FileVersion{}}, Conflicts: []model.Conflict{}}
+	next := model.Snapshot{Manifest: model.Manifest{ContextAgents: contextAgents, SchemaVersion: 1, ID: id, Name: name, WorkspacePath: destination, RepositoryRoot: e.Repository.Root, CommonGitDir: e.Repository.CommonDir, WorkRoot: e.WorkRoot, Branch: branch, SyncedCommit: commit, Generation: 2, Phase: "ready", RespectExecutableBits: respect, LocalGit: options.LocalGit, OwnerConfig: options.ConfigData != nil || options.ConfigPath != "", Config: config, Selection: selection}, Baseline: model.Baseline{Files: map[string]model.FileVersion{}}, Conflicts: []model.Conflict{}}
 	for _, filename := range names {
 		if err = ctx.Err(); err != nil {
 			return report, err
@@ -305,7 +324,57 @@ func (e *Engine) Create(ctx context.Context, name string, options CreateOptions,
 			report.Message += fmt.Sprintf(" Copied %d agent instruction files from the main checkout.", len(summary.Added))
 		}
 	}
+	if options.LocalGit {
+		if err = e.initLaneGit(ctx, destination, commit, report.AgentContext); err != nil {
+			return report, err
+		}
+		report.Message += " Initialized isolated local .git repository (not a worktree; no remote)."
+	}
 	return report, nil
+}
+
+// initLaneGit initializes a standalone, isolated local Git repository inside
+// the lane directory so edits can be tracked locally without creating a worktree
+// or linking to the source repository.
+func (e *Engine) initLaneGit(ctx context.Context, laneDir, commit string, agentCtx *ContextReport) error {
+	if _, err := e.Repository.Run(ctx, laneDir, nil, "init", "-q", "-b", "main"); err != nil {
+		return err
+	}
+	gitDir := filepath.Join(laneDir, ".git")
+	info, err := os.Lstat(gitDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return model.Fail(3, "lane-git-not-standalone", "Lane .git must be a standalone directory, not a worktree gitfile")
+	}
+	if _, altErr := os.Lstat(filepath.Join(gitDir, "objects", "info", "alternates")); altErr == nil {
+		return model.Fail(3, "lane-git-alternates-forbidden", "Lane .git must not share object alternates with another repository")
+	}
+	var exclude strings.Builder
+	exclude.WriteString(".workcopy/\n")
+	if agentCtx != nil {
+		for _, path := range agentCtx.Added {
+			exclude.WriteString("/" + path + "\n")
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(gitDir, "info"), 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte(exclude.String()), 0600); err != nil {
+		return err
+	}
+	if _, err := e.Repository.Run(ctx, laneDir, nil, "add", "-A"); err != nil {
+		return err
+	}
+	short := commit
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	if _, err := e.Repository.Run(ctx, laneDir, nil, "-c", "user.name=Workcopy", "-c", "user.email=workcopy@localhost", "commit", "-q", "--allow-empty", "-m", "workcopy: baseline "+short); err != nil {
+		return err
+	}
+	return nil
 }
 
 // findNameCollision asks the lane volume whether any two selected paths are one

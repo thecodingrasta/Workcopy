@@ -30,11 +30,11 @@ func TestMissingLaneIsReportedAndClearedWithoutTouchingNeighbours(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = e.Create(ctx, "other", CreateOptions{All: true}, false); err != nil {
+	if _, err = e.Create(ctx, "other", CreateOptions{AllowTempRoot: true, All: true}, false); err != nil {
 		t.Fatal(err)
 	}
 	sentinel := filepath.Join(e.WorkRoot, "sentinel.txt")
@@ -144,7 +144,7 @@ func TestAbandonReviewDropsOnlyUnfinishedReceiptsAndKeepsFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	prepared, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

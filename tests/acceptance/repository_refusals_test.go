@@ -422,13 +422,13 @@ func TestMCPRefusalsMatchTheCommandLine(t *testing.T) {
 		{"selection that matches nothing", good.Path, "l1", "no/such/dir", 2, "project-not-found"},
 	}
 	for _, c := range cases {
-		args := map[string]any{"repo": c.repository, "root": filepath.Join(good.Parent, "mcp lanes", strings.ReplaceAll(c.name, " ", "-")), "name": c.lane, "projects": []string{c.selector}, "dryRun": false}
+		args := map[string]any{"repo": c.repository, "root": filepath.Join(good.Parent, "mcp lanes", strings.ReplaceAll(c.name, " ", "-")), "name": c.lane, "projects": []string{c.selector}, "dryRun": false, "allowTempRoot": true}
 		out := mcpCall(t, session, "create", args, c.exit)
 		if out.Error == nil || out.Error.Code != c.code {
 			t.Errorf("%s: MCP must report %q, got %+v", c.name, c.code, out.Error)
 		}
 	} // A refusal must not poison the session: a good repository still works.
-	args := map[string]any{"repo": good.Path, "root": filepath.Join(good.Parent, "mcp lanes", "after"), "name": "after", "projects": []string{"src"}, "dryRun": false}
+	args := map[string]any{"repo": good.Path, "root": filepath.Join(good.Parent, "mcp lanes", "after"), "name": "after", "projects": []string{"src"}, "dryRun": false, "allowTempRoot": true}
 	created := mcpCall(t, session, "create", args, 0)
 	mcpCall(t, session, "destroy", map[string]any{"repo": good.Path, "root": filepath.Join(good.Parent, "mcp lanes", "after"), "name": created.Report.Workspace.Name, "dryRun": false}, 0)
 }

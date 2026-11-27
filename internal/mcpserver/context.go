@@ -100,6 +100,9 @@ func (s *Server) context(ctx context.Context, ref string) (*Context, error) {
 	}
 	sort.Strings(c.BuildInputs)
 	c.AllowedShareTargets = append([]string(nil), s.opts.ShareTargets...)
+	if isTemp, tempRoot := workspace.IsTempDirectory(s.engine.WorkRoot); isTemp {
+		c.Warnings = append(c.Warnings, "WorkRoot "+s.engine.WorkRoot+" is inside temporary directory "+tempRoot+". NEVER create a lane in a temporary directory unless the user has EXPLICITLY agreed to it; changes there can be lost before merging.")
+	}
 	return c, nil
 }
 func (s *Server) discover(ctx context.Context) (workspace.Report, error) {

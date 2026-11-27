@@ -19,6 +19,30 @@ func gitAt(t *testing.T, directory string, args ...string) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+func TestWorktreeFreeMergeAndCommit(t *testing.T) {
+	r, e, lane := fixtureLane(t)
+	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("worktree-free change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	beforeWorktrees := r.Git("worktree", "list", "--porcelain")
+	review, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	if err != nil || review.Review == nil {
+		t.Fatalf("worktree-free merge failed: %+v %v", review, err)
+	}
+	if review.Review.Path != "" || review.Review.Worktree {
+		t.Fatalf("default merge should not create a review worktree: %+v", review.Review)
+	}
+	if afterWorktrees := r.Git("worktree", "list", "--porcelain"); afterWorktrees != beforeWorktrees {
+		t.Fatalf("default merge created a git worktree:\n%s", afterWorktrees)
+	}
+	committed, err := e.Merge(context.Background(), "task", MergeOptions{Commit: true, Approve: true, ReviewID: review.Review.ID, Message: "Worktree-free commit"}, false)
+	if err != nil || committed.Review == nil || committed.Review.State != "committed" || committed.Review.Commit == "" {
+		t.Fatalf("commit worktree-free review failed: %+v %v", committed, err)
+	}
+	if got := r.Git("show", committed.Review.Commit+":b.txt"); got != "worktree-free change" {
+		t.Fatalf("committed content mismatch: %q", got)
+	}
+}
 func TestReviewAndExplicitCommitPreserveDirtyMainCheckout(t *testing.T) {
 	r, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("agent contribution\n"), 0644)
@@ -28,7 +52,7 @@ func TestReviewAndExplicitCommitPreserveDirtyMainCheckout(t *testing.T) {
 	head := r.Git("rev-parse", "HEAD")
 	symbolic := r.Git("symbolic-ref", "HEAD")
 	indexBefore, _ := os.ReadFile(filepath.Join(r.Path, ".git", "index"))
-	review, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	review, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil || review.Review == nil {
 		t.Fatal(review, err)
 	}
@@ -62,7 +86,7 @@ func TestMergeReconcilesUpstreamBeforePreparingReview(t *testing.T) {
 	os.WriteFile(filepath.Join(lane, "a.txt"), []byte("LOCAL\nsecond\nthird\nfourth\nfifth\n"), 0644)
 	r.Write("a.txt", "first\nsecond\nthird\nfourth\nUPSTREAM\n")
 	r.Commit("upstream")
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil || report.Review == nil {
 		t.Fatal(report, err)
 	}
@@ -74,7 +98,7 @@ func TestMergeReconcilesUpstreamBeforePreparingReview(t *testing.T) {
 func TestCommitRejectsChangedReviewAndMissingApproval(t *testing.T) {
 	_, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644)
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,12 +114,12 @@ func TestCommitRejectsChangedReviewAndMissingApproval(t *testing.T) {
 func TestMergeDoesNotReuseAnEditedReview(t *testing.T) {
 	_, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644)
-	first, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	first, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(first.Review.Path, "b.txt"), []byte("human review edit\n"), 0644)
-	repeated, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	repeated, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err == nil && repeated.Review != nil && repeated.Review.ID == first.Review.ID {
 		t.Fatal("edited review reported as unchanged")
 	}
@@ -108,7 +132,7 @@ func TestMergeDoesNotReuseAnEditedReview(t *testing.T) {
 func TestCommitRecoveryPreservesNewStagedChanges(t *testing.T) {
 	_, e, lane := fixtureLane(t)
 	os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644)
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +166,7 @@ func TestPreparationRecoveryPreservesNewStagedChanges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("local\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

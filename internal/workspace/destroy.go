@@ -74,7 +74,7 @@ func (e *Engine) Destroy(ctx context.Context, name string, force, dryRun bool) (
 			record.DeleteDirs = append(record.DeleteDirs, relative)
 			return nil
 		}
-		metadata := strings.HasPrefix(relative, ".workcopy/")
+		metadata := strings.HasPrefix(relative, ".workcopy/") || (opened.snapshot.Manifest.LocalGit && strings.HasPrefix(relative, ".git/"))
 		mapping := false
 		for _, m := range opened.snapshot.Manifest.Mappings {
 			if relative == m.Path {
@@ -379,8 +379,14 @@ func (e *Engine) finishDeletion(ctx context.Context, registry *fsops.Root, recor
 			}
 		}
 		if err = root.Remove(name); err != nil {
-			root.Close()
-			return err
+			if strings.HasPrefix(name, ".git/") {
+				_ = os.Chmod(filepath.Join(root.Path, filepath.FromSlash(name)), 0600)
+				err = root.Remove(name)
+			}
+			if err != nil {
+				root.Close()
+				return err
+			}
 		}
 	}
 	sort.Slice(record.DeleteDirs, func(i, j int) bool {

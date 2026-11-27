@@ -419,7 +419,7 @@ func (e *Engine) scan(ctx context.Context, opened *lane) (map[string]model.FileV
 	fresh := []string{}
 	copied := opened.contextSet()
 	for name := range names {
-		if name == ".workcopy" || strings.HasPrefix(name, ".workcopy/") {
+		if name == ".workcopy" || strings.HasPrefix(name, ".workcopy/") || name == ".git" || strings.HasPrefix(name, ".git/") {
 			continue
 		}
 		if fsops.IsTempArtifact(name) {

@@ -108,7 +108,7 @@ func TestInterruptedReviewPreparationRestoresMissingFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(lane, "b.txt"), local, 0644); err != nil {
 		t.Fatal(err)
 	}
-	report, err := e.Merge(context.Background(), "task", MergeOptions{}, false)
+	report, err := e.Merge(context.Background(), "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

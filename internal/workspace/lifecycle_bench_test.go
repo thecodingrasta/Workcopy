@@ -50,7 +50,7 @@ func BenchmarkLaneLifecycle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		name := fmt.Sprintf("bench%d", i)
 		started := time.Now()
-		created, createErr := e.Create(ctx, name, CreateOptions{All: true}, false)
+		created, createErr := e.Create(ctx, name, CreateOptions{AllowTempRoot: true, All: true}, false)
 		if createErr != nil {
 			b.Fatal(createErr)
 		}

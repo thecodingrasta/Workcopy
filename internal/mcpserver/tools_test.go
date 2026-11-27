@@ -14,7 +14,7 @@ import (
 // verifies the hash, and resolves it. Agent steering must stay out of the way.
 func TestConflictContentCanBeReadAndResolvedOverMCP(t *testing.T) {
 	session, r, _ := connect(t, Options{})
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
 	if created.ExitCode != 0 {
 		t.Fatal(created.Error)
 	}
@@ -61,7 +61,7 @@ func TestSolutionFilterOverMCP(t *testing.T) {
 	r.Write("B/B.csproj", `<Project/>`)
 	r.Write("Repo.sln", "Microsoft Visual Studio Solution File, Format Version 12.00\nProject(\"{A}\") = \"A\", \"A\\A.csproj\", \"{B}\"\nEndProject\nProject(\"{A}\") = \"B\", \"B\\B.csproj\", \"{C}\"\nEndProject\n")
 	r.Commit("solution")
-	if created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}}); created.ExitCode != 0 {
+	if created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}}); created.ExitCode != 0 {
 		t.Fatal(created.Error)
 	}
 	preview := call(t, session, "solution", Solution{Mutation: Mutation{Lane: Lane{Name: "worker"}, DryRun: true}, Path: "Repo.sln"})
@@ -104,7 +104,7 @@ func TestAgentContextToolsOverMCP(t *testing.T) {
 		}
 	}
 
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
 	if created.ExitCode != 0 || created.Report.AgentContext == nil || strings.Join(created.Report.AgentContext.Added, ",") != ".kiro/steering/product.md" {
 		t.Fatalf("create copies steering: %+v", created.Report)
 	}
@@ -140,5 +140,54 @@ func TestAgentContextToolsOverMCP(t *testing.T) {
 	resource, err := session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: "workcopy://guide"})
 	if err != nil || !strings.Contains(resource.Contents[0].Text, "workcopy_refresh_context") || !strings.Contains(resource.Contents[0].Text, "WORKCOPY_AGENT_CONTEXT_CONFIG") || !strings.Contains(resource.Contents[0].Text, "notSelected") || !strings.Contains(resource.Contents[0].Text, "Credentials, media") {
 		t.Fatalf("guide resource: %v", err)
+	}
+}
+
+func TestMCPWorkRootTempGuardrailLocalGitAndWorktreeFreeReview(t *testing.T) {
+	session, r, s := connect(t, Options{})
+	customRoot := filepath.Join(r.Parent, "custom-workroot")
+
+	// Temp directory guardrail: refused without allowTempRoot=true.
+	refused := call(t, session, "create", Create{
+		Mutation: Mutation{Lane: Lane{Name: "blocked", Scope: Scope{Repo: r.Path, WorkRoot: customRoot}}},
+		Projects: []string{"A"},
+	})
+	if refused.ExitCode != 3 || refused.Error == nil || refused.Error.Code != "temp-work-root-refused" {
+		t.Fatalf("expected temp-work-root-refused, got: %+v", refused)
+	}
+
+	// Explicitly allowed with allowTempRoot=true, workRoot alias, and git=true.
+	created := call(t, session, "create", Create{
+		AllowTempRoot: true,
+		Git:           true,
+		Mutation:      Mutation{Lane: Lane{Name: "worker", Scope: Scope{Repo: r.Path, WorkRoot: customRoot}}},
+		Projects:      []string{"A"},
+	})
+	if created.ExitCode != 0 || created.Scope == nil || created.Scope.Root != customRoot {
+		t.Fatalf("create with workRoot and git failed: %+v", created)
+	}
+
+	// workcopy_list with workRoot alias finds the lane outside default root.
+	listed := call(t, session, "list", Empty{Scope: Scope{Repo: r.Path, WorkRoot: customRoot}})
+	if listed.ExitCode != 0 || len(listed.Report.Workspaces) != 1 || listed.Report.Workspaces[0].Name != "worker" {
+		t.Fatalf("list with workRoot failed: %+v", listed)
+	}
+	_ = s
+
+	// Edit in lane and run worktree-free review + batch_review.
+	laneDir := created.Report.Workspace.Path
+	if err := os.WriteFile(filepath.Join(laneDir, "A", "a.txt"), []byte("mcp-edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	reviewed := call(t, session, "review", ReviewInput{Mutation: Mutation{Lane: Lane{Name: "worker", Scope: Scope{Repo: r.Path, WorkRoot: customRoot}}}})
+	if reviewed.ExitCode != 0 || reviewed.Report.Review == nil || reviewed.Report.Review.Path != "" || reviewed.Report.Review.Worktree {
+		t.Fatalf("default MCP review should be worktree-free: %+v", reviewed)
+	}
+	batched := call(t, session, "batch_review", BatchInput{
+		Empty: Empty{Scope: Scope{Repo: r.Path, WorkRoot: customRoot}},
+		Names: []string{"worker"},
+	})
+	if batched.ExitCode != 0 || batched.Report.Batch == nil || batched.Report.Batch.Path != "" || batched.Report.Batch.Worktree {
+		t.Fatalf("default MCP batch_review should be worktree-free: %+v", batched)
 	}
 }

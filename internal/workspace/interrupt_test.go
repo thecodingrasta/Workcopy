@@ -43,7 +43,7 @@ func TestInterruptedReviewPreparationRecoversToTheSameReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(background, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(background, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,13 +54,13 @@ func TestInterruptedReviewPreparationRecoversToTheSameReview(t *testing.T) {
 
 	ctx, cancel := cancelAfter(256)
 	defer cancel()
-	if _, err = e.Merge(ctx, "task", MergeOptions{}, false); err == nil {
+	if _, err = e.Merge(ctx, "task", MergeOptions{Worktree: true}, false); err == nil {
 		t.Fatal("the interrupted review must report failure")
 	}
 	if _, err = e.Status(background, "task"); failureCode(t, err) != "recovery-required" {
 		t.Fatalf("an unfinished review must block the lane with recovery-required: %v", err)
 	}
-	if _, err = e.Merge(background, "task", MergeOptions{}, false); failureCode(t, err) != "recovery-required" {
+	if _, err = e.Merge(background, "task", MergeOptions{Worktree: true}, false); failureCode(t, err) != "recovery-required" {
 		t.Fatalf("a second review must not start over the unfinished one: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestInterruptedReviewPreparationRecoversToTheSameReview(t *testing.T) {
 	if err != nil || !strings.Contains(recovered.Message, "review preparation recovered") {
 		t.Fatalf("recover must finish the review: %+v %v", recovered, err)
 	}
-	reused, err := e.Merge(background, "task", MergeOptions{}, false)
+	reused, err := e.Merge(background, "task", MergeOptions{Worktree: true}, false)
 	if err != nil || reused.Review == nil || reused.Review.State != "prepared" || !strings.Contains(reused.Message, "reused") {
 		t.Fatalf("the recovered review must be the prepared one: %+v %v", reused, err)
 	}
@@ -90,7 +90,7 @@ func TestInterruptedCreationRecoversToACleanLane(t *testing.T) {
 	}
 	ctx, cancel := cancelAfter(256)
 	defer cancel()
-	if _, err = e.Create(ctx, "task", CreateOptions{All: true}, false); err == nil {
+	if _, err = e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 		t.Fatal("the interrupted creation must report failure")
 	}
 	listed, err := e.List(background)
@@ -128,14 +128,14 @@ func TestBulkOperationsAreIdenticalWithOneWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(created.Workspace.Path, "src", "p01", "dir1", "file0001.txt"), []byte("edited\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,7 +39,7 @@ func TestExpandAndSyncWriteFilesInTheRepositoryForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{Projects: []string{"A"}}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, Projects: []string{"A"}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestAutoCRLFRepositoryCommitsOnlyTheRealChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestSharedFingerprintIgnoresLineEndingRewrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestSolutionFilterFromACRLFSolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{Projects: []string{"A"}}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, Projects: []string{"A"}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestConflictContentAndFileResolutionUseTheStoredForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

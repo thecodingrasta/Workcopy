@@ -23,7 +23,7 @@ func shapeFixture(t *testing.T, folder bool) (*testutil.Repository, *Engine, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(context.Background(), "task", CreateOptions{All: true}, false)
+	created, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

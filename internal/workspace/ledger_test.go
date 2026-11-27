@@ -23,7 +23,7 @@ func ledgerLane(t *testing.T, tracked map[string]string, config string) (*Engine
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := CreateOptions{All: true}
+	options := CreateOptions{AllowTempRoot: true, All: true}
 	if config != "" {
 		options.ConfigData = []byte(config)
 	}

@@ -28,7 +28,7 @@ func BenchmarkExpandSource(b *testing.B) {
 	b.StopTimer()
 	for n := 0; n < b.N; n++ {
 		name := fmt.Sprintf("bench-%d", n)
-		if _, err = engine.Create(context.Background(), name, CreateOptions{Projects: []string{"initial"}}, false); err != nil {
+		if _, err = engine.Create(context.Background(), name, CreateOptions{AllowTempRoot: true, Projects: []string{"initial"}}, false); err != nil {
 			b.Fatal(err)
 		}
 		b.StartTimer()

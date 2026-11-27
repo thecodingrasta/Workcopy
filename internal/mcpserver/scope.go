@@ -19,7 +19,7 @@ func directoryScope(ctx context.Context, directory string, scope Scope) (Scope, 
 	if err != nil {
 		return Scope{}, err
 	}
-	if !filepath.IsAbs(directory) || scope.Repo != "" || scope.Root != "" {
+	if !filepath.IsAbs(directory) || scope.Repo != "" || scope.Root != "" || scope.WorkRoot != "" {
 		return Scope{}, model.Fail(2, "invalid-directory-scope", "Pass an absolute directory alone, or use repo/root explicitly")
 	}
 	manifest, err := workspace.Locate(directory)
@@ -41,6 +41,15 @@ func (s *Server) selectScope(ctx context.Context, scope Scope, optional bool) (*
 	}
 	if scope.Root, err = fsops.NormalizeInput(ctx, scope.Root); err != nil {
 		return nil, err
+	}
+	if scope.WorkRoot, err = fsops.NormalizeInput(ctx, scope.WorkRoot); err != nil {
+		return nil, err
+	}
+	if scope.Root != "" && scope.WorkRoot != "" && rootKey(scope.Root) != rootKey(scope.WorkRoot) {
+		return nil, model.Fail(2, "invalid-scope", "Pass root or workRoot, not two different lane roots")
+	}
+	if scope.Root == "" {
+		scope.Root = scope.WorkRoot
 	}
 	if scope.Repo == "" && scope.Root == "" && s.engine != nil {
 		return s, nil

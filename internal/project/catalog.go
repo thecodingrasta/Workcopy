@@ -285,6 +285,9 @@ func Select(config model.Config, catalog Catalog, profileName string, requested 
 		if !ok {
 			return selection, model.Fail(2, "unknown-profile", "Unknown profile "+profileName+"; run discover to list the configured profiles")
 		}
+		if !all {
+			selection.Profile = profileName
+		}
 	}
 	if !all {
 		requested = append(append([]string(nil), profile.Projects...), requested...)

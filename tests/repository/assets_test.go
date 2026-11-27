@@ -93,7 +93,7 @@ func TestPublishedConfigurationExamplesCreateRealLanes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := engine.Create(context.Background(), "example", workspace.CreateOptions{}, false)
+			result, err := engine.Create(context.Background(), "example", workspace.CreateOptions{AllowTempRoot: true}, false)
 			if err != nil {
 				t.Fatal(err)
 			}

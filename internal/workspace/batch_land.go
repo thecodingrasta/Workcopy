@@ -82,27 +82,29 @@ func (e *Engine) LandBatch(ctx context.Context, id string, approve, dryRun bool)
 	if err != nil {
 		return report, err
 	}
-	reader, err := repo.Reader(ctx)
-	if err != nil {
-		return report, err
-	}
-	defer reader.Close()
-	inventory, err := e.batchInventory(ctx, receipt.BatchReview, reader, entries, names)
-	if err != nil {
-		return report, err
-	}
-	if err = e.verifyReviewGit(ctx, inventory, receipt.Commit); err != nil {
-		return report, err
-	}
-	if err = e.verifyBatchIndex(ctx, receipt, false); err != nil {
-		return report, err
-	}
-	respect, err := e.batchFileMode(ctx, receipt.ID)
-	if err != nil {
-		return report, err
-	}
-	if err = e.verifyReviewFiles(inventory, respect); err != nil {
-		return report, err
+	if receipt.Path != "" {
+		reader, readErr := repo.Reader(ctx)
+		if readErr != nil {
+			return report, readErr
+		}
+		defer reader.Close()
+		inventory, invErr := e.batchInventory(ctx, receipt.BatchReview, reader, entries, names)
+		if invErr != nil {
+			return report, invErr
+		}
+		if err = e.verifyReviewGit(ctx, inventory, receipt.Commit); err != nil {
+			return report, err
+		}
+		if err = e.verifyBatchIndex(ctx, receipt, false); err != nil {
+			return report, err
+		}
+		respect, modeErr := e.batchFileMode(ctx, receipt.ID)
+		if modeErr != nil {
+			return report, modeErr
+		}
+		if err = e.verifyReviewFiles(inventory, respect); err != nil {
+			return report, err
+		}
 	}
 	if err = e.batchCheckoutPreflight(ctx, receipt); err != nil {
 		return report, err

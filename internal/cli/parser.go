@@ -25,7 +25,7 @@ var boolFlags = map[string]bool{
 	"json": true, "help": true, "dry-run": true, "all": true,
 	"force": true, "use-local": true, "use-upstream": true,
 	"delete": true, "commit": true, "approve": true,
-	"no-commit": true, "project-file": true, "trust-shared": true, "abandon-review": true, "include-files": true, "init": true, "refresh": true,
+	"no-commit": true, "project-file": true, "trust-shared": true, "abandon-review": true, "include-files": true, "init": true, "refresh": true, "allow-temp-root": true, "worktree": true, "git": true,
 }
 
 func parse(input []string) (arguments, error) {

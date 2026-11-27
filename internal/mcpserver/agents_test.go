@@ -81,7 +81,7 @@ func TestLaneIsBuiltForTheClientThatAskedOverMCP(t *testing.T) {
 			if summary == nil || summary.Client != c.client || summary.AgentsSource == "" {
 				t.Fatalf("bootstrap must tell the agent what it will be served and why: %+v", summary)
 			}
-			created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
+			created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}})
 			if created.ExitCode != 0 {
 				t.Fatal(created.Error)
 			}
@@ -113,14 +113,14 @@ func TestCallerOwnerAndRefreshControlsOverMCP(t *testing.T) {
 		t.Fatalf("auto plus an owner extra: %s", got)
 	}
 
-	if bad := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "typo"}}, Projects: []string{"A"}, Agents: []string{"claud"}}); bad.ExitCode != 2 || bad.Error == nil || !strings.Contains(bad.Error.Message, "claude") {
+	if bad := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "typo"}}, Projects: []string{"A"}, Agents: []string{"claud"}}); bad.ExitCode != 2 || bad.Error == nil || !strings.Contains(bad.Error.Message, "claude") {
 		t.Fatalf("a misspelt tool name is a usage error that lists the valid names: %+v", bad)
 	}
 	if call(t, session, "list", Empty{}).Report == nil {
 		t.Fatal("list")
 	}
 
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}, Agents: []string{"codex"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Projects: []string{"A"}, Agents: []string{"codex"}})
 	if created.ExitCode != 0 || strings.Join(created.Report.AgentContext.Agents, ",") != "codex" || !strings.Contains(created.Report.AgentContext.AgentsSource, "requested") {
 		t.Fatalf("the caller's choice beats auto and the owner extra: %+v", created.Report.AgentContext)
 	}

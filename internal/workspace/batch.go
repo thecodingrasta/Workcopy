@@ -18,13 +18,14 @@ import (
 )
 
 type BatchReview struct {
-	ID     string   `json:"id"`
-	Lanes  []string `json:"lanes"`
-	Target string   `json:"target"`
-	Base   string   `json:"base"`
-	Commit string   `json:"commit,omitempty"`
-	Path   string   `json:"path,omitempty"`
-	State  string   `json:"state"`
+	ID       string   `json:"id"`
+	Lanes    []string `json:"lanes"`
+	Target   string   `json:"target"`
+	Base     string   `json:"base"`
+	Commit   string   `json:"commit,omitempty"`
+	Path     string   `json:"path,omitempty"`
+	Worktree bool     `json:"worktree,omitempty"`
+	State    string   `json:"state"`
 }
 
 type batchReceipt struct {
@@ -96,6 +97,12 @@ func (e *Engine) PrepareBatchWith(ctx context.Context, names []string, target st
 // PrepareBatchWithAdmission admits the exact target and locked lane inputs
 // that will be used to build the candidate, before creating Git objects.
 func (e *Engine) PrepareBatchWithAdmission(ctx context.Context, names []string, target string, resolutions []BatchResolution, dryRun bool, admit func(Plan) error) (Report, error) {
+	return e.PrepareBatchWithOptions(ctx, names, target, resolutions, false, dryRun, admit)
+}
+
+// PrepareBatchWithOptions prepares a combined batch review, optionally
+// materializing a separate review worktree when worktree is true.
+func (e *Engine) PrepareBatchWithOptions(ctx context.Context, names []string, target string, resolutions []BatchResolution, worktree, dryRun bool, admit func(Plan) error) (Report, error) {
 	report := Report{Command: "batch-review"}
 	choices, err := batchResolutions(resolutions)
 	if err != nil {
@@ -247,26 +254,37 @@ func (e *Engine) PrepareBatchWithAdmission(ctx context.Context, names []string, 
 	if err != nil {
 		return report, err
 	}
-	review := BatchReview{ID: id, Lanes: names, Target: ref, Base: base, Commit: commit, Path: filepath.Join(e.WorkRoot, ".workcopy-reviews", "batch-"+id), State: "preparing"}
+	review := BatchReview{ID: id, Lanes: names, Target: ref, Base: base, Commit: commit, Worktree: worktree, State: "preparing"}
+	if worktree {
+		review.Path = filepath.Join(e.WorkRoot, ".workcopy-reviews", "batch-"+id)
+	}
 	receipt := batchReceipt{BatchReview: review, Repository: e.Repository.CommonDir, Checkout: e.Repository.Root, Inputs: inputs}
-	if err = root.MkdirAll(".workcopy-reviews", 0700); err != nil {
-		return report, err
-	}
-	if err = noGitAncestor(filepath.Dir(review.Path)); err != nil {
-		return report, err
-	}
-	if err = saveBatch(root, receipt); err != nil {
-		return report, err
-	}
-	report.Batch = &receipt.BatchReview
-	if err = e.finishBatchReview(ctx, receipt, reader, tree.tree, files); err != nil {
-		return report, err
+	if worktree {
+		if err = root.MkdirAll(".workcopy-reviews", 0700); err != nil {
+			return report, err
+		}
+		if err = noGitAncestor(filepath.Dir(review.Path)); err != nil {
+			return report, err
+		}
+		if err = saveBatch(root, receipt); err != nil {
+			return report, err
+		}
+		report.Batch = &receipt.BatchReview
+		if err = e.finishBatchReview(ctx, receipt, reader, tree.tree, files); err != nil {
+			return report, err
+		}
 	}
 	receipt.State = "prepared"
 	if err = saveBatch(root, receipt); err != nil {
 		return report, err
 	}
-	report.Message = "Combined review prepared. Inspect the base-to-candidate diff and validate before approval."
+	report.Batch = &receipt.BatchReview
+	report.NextCommands = []string{fmt.Sprintf("git -C %s diff %s %s", shellQuote(e.Repository.Root), base, commit)}
+	if worktree {
+		report.Message = "Combined review worktree prepared. Inspect the base-to-candidate diff and validate before approval."
+	} else {
+		report.Message = "Combined review prepared without a worktree. Inspect the base-to-candidate diff before approving batch-land."
+	}
 	return report, nil
 }
 
@@ -442,7 +460,8 @@ func (e *Engine) loadBatch(root *fsops.Root, id string) (batchReceipt, error) {
 		return receipt, err
 	}
 	if receipt.ID != id || receipt.Repository != e.Repository.CommonDir || receipt.Checkout != e.Repository.Root ||
-		receipt.Path != filepath.Join(e.WorkRoot, ".workcopy-reviews", "batch-"+id) ||
+		(receipt.Path != "" && receipt.Path != filepath.Join(e.WorkRoot, ".workcopy-reviews", "batch-"+id)) ||
+		(receipt.Worktree && receipt.Path == "") ||
 		!strings.HasPrefix(receipt.Target, "refs/heads/") || !git.ValidObjectID(receipt.Base) || !git.ValidObjectID(receipt.Commit) ||
 		len(receipt.Lanes) == 0 || len(receipt.Lanes) != len(receipt.Inputs) {
 		return receipt, model.Fail(3, "batch-ownership-mismatch", "Batch receipt does not match this checkout and workspace")
@@ -482,21 +501,23 @@ func (e *Engine) RecoverBatch(ctx context.Context, id string) (Report, error) {
 		if err = e.verifyBatchParent(ctx, receipt); err != nil {
 			return report, err
 		}
-		tree, treeErr := e.Repository.Tree(ctx, receipt.Commit)
-		if treeErr != nil {
-			return report, treeErr
-		}
-		names, treeErr := validateTree(tree, model.Selection{All: true}, false)
-		if treeErr != nil {
-			return report, treeErr
-		}
-		reader, readerErr := e.Repository.Reader(ctx)
-		if readerErr != nil {
-			return report, readerErr
-		}
-		defer reader.Close()
-		if err = e.finishBatchReview(ctx, receipt, reader, tree, names); err != nil {
-			return report, err
+		if receipt.Path != "" {
+			tree, treeErr := e.Repository.Tree(ctx, receipt.Commit)
+			if treeErr != nil {
+				return report, treeErr
+			}
+			names, treeErr := validateTree(tree, model.Selection{All: true}, false)
+			if treeErr != nil {
+				return report, treeErr
+			}
+			reader, readerErr := e.Repository.Reader(ctx)
+			if readerErr != nil {
+				return report, readerErr
+			}
+			defer reader.Close()
+			if err = e.finishBatchReview(ctx, receipt, reader, tree, names); err != nil {
+				return report, err
+			}
 		}
 		receipt.State = "prepared"
 	case "landing":

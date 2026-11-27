@@ -100,25 +100,35 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	if receipt == nil || receipt.State != "prepared" {
 		return report, model.Fail(3, "review-not-prepared", "No prepared review matches this receipt")
 	}
-	if err = e.validateReviewPath(opened.snapshot, *receipt); err != nil {
-		return report, err
+	if receipt.Path != "" {
+		if err = e.validateReviewPath(opened.snapshot, *receipt); err != nil {
+			return report, err
+		}
 	}
 	if err = e.verifyLaneReceipt(ctx, opened, *receipt); err != nil {
 		return report, err
 	}
-	if err = e.verifyReviewGit(ctx, *receipt, receipt.BaseCommit); err != nil {
+	gitDir := e.Repository.Root
+	if receipt.Path != "" {
+		if err = e.verifyReviewGit(ctx, *receipt, receipt.BaseCommit); err != nil {
+			return report, err
+		}
+		if err = e.verifyReviewFiles(*receipt, opened.snapshot.Manifest.RespectExecutableBits); err != nil {
+			return report, err
+		}
+		if _, err = e.Repository.Run(ctx, receipt.Path, nil, "diff-index", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", receipt.BaseCommit, "--"); err != nil {
+			return report, model.Fail(3, "review-index-changed", "Review staging changed; Workcopy will not overwrite it")
+		}
+		gitDir = receipt.Path
+	}
+	if err = e.requireGitIdentity(ctx, gitDir); err != nil {
 		return report, err
 	}
-	if err = e.verifyReviewFiles(*receipt, opened.snapshot.Manifest.RespectExecutableBits); err != nil {
-		return report, err
+	effects := []string{"Commit exactly the approved review using an isolated Git index", "Advance only the detached review HEAD; never main or a remote"}
+	if receipt.Path == "" {
+		effects = []string{"Commit exactly the approved review using an isolated Git index without creating a worktree", "Create an unattached commit object; never advance main or a remote"}
 	}
-	if _, err = e.Repository.Run(ctx, receipt.Path, nil, "diff-index", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", receipt.BaseCommit, "--"); err != nil {
-		return report, model.Fail(3, "review-index-changed", "Review staging changed; Workcopy will not overwrite it")
-	}
-	if err = e.requireGitIdentity(ctx, receipt.Path); err != nil {
-		return report, err
-	}
-	report.Plan = &Plan{Action: "commit-review", Effects: []string{"Commit exactly the approved review using an isolated Git index", "Advance only the detached review HEAD; never main or a remote"}}
+	report.Plan = &Plan{Action: "commit-review", Effects: effects}
 	if dryRun {
 		report.Message = "Commit approval validated without creating Git objects, refs or metadata."
 		return report, nil
@@ -129,11 +139,15 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	}
 	defer os.RemoveAll(directory)
 	index := filepath.Join(directory, "index")
-	root, err := fsops.OpenRoot(receipt.Path)
-	if err != nil {
-		return report, err
+	root := opened.root
+	if receipt.Path != "" {
+		var openErr error
+		root, openErr = fsops.OpenRoot(receipt.Path)
+		if openErr != nil {
+			return report, openErr
+		}
+		defer root.Close()
 	}
-	defer root.Close()
 	names := []string{}
 	for filename := range receipt.Files {
 		names = append(names, filename)
@@ -144,7 +158,7 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 		version := receipt.Files[filename]
 		oid := version.ObjectID
 		if oid == "" && version.Large() {
-			stored, hashErr := e.hashLargeReviewFile(ctx, root, receipt.Path, filename, version)
+			stored, hashErr := e.hashLargeReviewFile(ctx, root, gitDir, filename, version)
 			if hashErr != nil {
 				return report, hashErr
 			}
@@ -158,7 +172,7 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 			if !actual.Equal(version) {
 				return report, model.Fail(3, "review-changed", "Review changed while committing")
 			}
-			hashed, hashErr := e.Repository.Run(ctx, receipt.Path, body, "hash-object", "-w", "--no-filters", "--stdin")
+			hashed, hashErr := e.Repository.Run(ctx, gitDir, body, "hash-object", "-w", "--no-filters", "--stdin")
 			if hashErr != nil {
 				return report, hashErr
 			}
@@ -175,13 +189,13 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 		}
 		fmt.Fprintf(&indexEntries, "%o %s\t%s%c", mode, oid, filename, 0)
 	}
-	if _, err = e.Repository.RunIndex(ctx, receipt.Path, index, nil, "read-tree", "--empty"); err != nil {
+	if _, err = e.Repository.RunIndex(ctx, gitDir, index, nil, "read-tree", "--empty"); err != nil {
 		return report, err
 	}
-	if _, err = e.Repository.RunIndex(ctx, receipt.Path, index, indexEntries.Bytes(), "update-index", "-z", "--index-info"); err != nil {
+	if _, err = e.Repository.RunIndex(ctx, gitDir, index, indexEntries.Bytes(), "update-index", "-z", "--index-info"); err != nil {
 		return report, err
 	}
-	tree, err := e.Repository.RunIndex(ctx, receipt.Path, index, nil, "write-tree")
+	tree, err := e.Repository.RunIndex(ctx, gitDir, index, nil, "write-tree")
 	if err != nil {
 		return report, err
 	}
@@ -189,7 +203,7 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	if !git.ValidObjectID(treeID) {
 		return report, fmt.Errorf("invalid review tree ID")
 	}
-	commit, err := e.Repository.Run(ctx, receipt.Path, []byte(options.Message+"\n"), "commit-tree", treeID, "-p", receipt.BaseCommit)
+	commit, err := e.Repository.Run(ctx, gitDir, []byte(options.Message+"\n"), "commit-tree", treeID, "-p", receipt.BaseCommit)
 	if err != nil {
 		return report, fmt.Errorf("configure Git author identity before committing: %w", err)
 	}
@@ -197,12 +211,19 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	if !git.ValidObjectID(receipt.Commit) {
 		return report, fmt.Errorf("invalid commit ID")
 	}
-	receipt.State = "committing"
-	if _, err = replaceReview(opened.store, *receipt); err != nil {
-		return report, err
-	}
-	if err = e.finishCommit(ctx, opened.store, *receipt); err != nil {
-		return report, fmt.Errorf("commit recovery receipt preserved; run recover: %w", err)
+	if receipt.Path == "" {
+		receipt.State = "committed"
+		if _, err = replaceReview(opened.store, *receipt); err != nil {
+			return report, err
+		}
+	} else {
+		receipt.State = "committing"
+		if _, err = replaceReview(opened.store, *receipt); err != nil {
+			return report, err
+		}
+		if err = e.finishCommit(ctx, opened.store, *receipt); err != nil {
+			return report, fmt.Errorf("commit recovery receipt preserved; run recover: %w", err)
+		}
 	}
 	fresh, err := opened.store.Load()
 	if err != nil {
@@ -216,12 +237,21 @@ func (e *Engine) commitReview(ctx context.Context, name string, options MergeOpt
 	}
 	report.Workspace = view(fresh)
 	report.Generation = fresh.Manifest.Generation
-	report.Message = "Approved review committed on its detached HEAD. Main was not changed and nothing was pushed."
+	if receipt.Path == "" {
+		report.Message = "Approved review committed to " + receipt.Commit + " without a review worktree. Main was not changed and nothing was pushed."
+	} else {
+		report.Message = "Approved review committed on its detached HEAD. Main was not changed and nothing was pushed."
+	}
 	return report, nil
 }
 func (e *Engine) finishCommit(ctx context.Context, store *state.Store, receipt model.Review) error {
 	snapshot, err := store.Load()
 	if err != nil {
+		return err
+	}
+	if receipt.Path == "" {
+		receipt.State = "committed"
+		_, err = replaceReview(store, receipt)
 		return err
 	}
 	if err = e.validateReviewPath(snapshot, receipt); err != nil {

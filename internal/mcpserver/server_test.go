@@ -109,7 +109,7 @@ func TestOwnerConfigurationAppliesToBootstrapDiscoveryAndCreation(t *testing.T) 
 	if err := os.WriteFile(config, []byte("changed after server startup"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "worker"}}, Profile: "daily"})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "worker"}}, Profile: "daily"})
 	if out.ExitCode != 0 {
 		t.Fatalf("creation did not use owner's profile: exit=%d error=%+v report=%+v", out.ExitCode, out.Error, out.Report)
 	}
@@ -142,16 +142,16 @@ func TestBootstrapSelectionPaginationAndLaneContext(t *testing.T) {
 	if err != nil || len(prompt.Messages) != 1 {
 		t.Fatalf("prompt: %v", err)
 	}
-	if out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}}); out.ExitCode != 2 {
+	if out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}}); out.ExitCode != 2 {
 		t.Fatal("implicit all selection permitted", out)
 	}
-	if out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}, DryRun: true}, Projects: []string{"A"}}); out.ExitCode != 0 {
+	if out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}, DryRun: true}, Projects: []string{"A"}}); out.ExitCode != 0 {
 		t.Fatalf("preview: %+v", out)
 	}
 	if _, err = os.Stat(s.engine.WorkRoot); !os.IsNotExist(err) {
 		t.Fatal("preview persisted a work root")
 	}
-	if out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
+	if out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
 		t.Fatalf("create: %+v", out)
 	}
 	out = call(t, session, "lane_context", Lane{Name: "one"})
@@ -161,23 +161,23 @@ func TestBootstrapSelectionPaginationAndLaneContext(t *testing.T) {
 	if body, err := os.ReadFile(filepath.Join(out.Context.Lane.Path, "AGENTS.md")); err != nil || string(body) != "Consumer policy\n" {
 		t.Fatal("consumer instructions changed")
 	}
-	if out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "two"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
+	if out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "two"}}, Projects: []string{"A"}}); out.ExitCode != 0 {
 		t.Fatal(out)
 	}
-	if out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "three"}}, Projects: []string{"A"}}); out.ExitCode != 3 || out.Error.Code != "lane-limit" {
+	if out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "three"}}, Projects: []string{"A"}}); out.ExitCode != 3 || out.Error.Code != "lane-limit" {
 		t.Fatal("count admission missing", out)
 	}
 }
 func TestAdmissionAndNegativeArgumentsHaveNoMutation(t *testing.T) {
 	session, _, s := connect(t, Options{ReserveBytes: ^uint64(0)})
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	if out.ExitCode != 3 || out.Error.Code != "disk-budget" {
 		t.Fatal(out)
 	}
 	if _, err := os.Stat(s.engine.WorkRoot); !os.IsNotExist(err) {
 		t.Fatal("blocked create persisted state")
 	}
-	out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "bad", Page: Page{Offset: -1}}}, Projects: []string{"A"}})
+	out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "bad", Page: Page{Offset: -1}}}, Projects: []string{"A"}})
 	if out.ExitCode != 2 {
 		t.Fatal(out)
 	}
@@ -212,7 +212,7 @@ func TestToolSurfaceHasNoBypassAndRejectsUnknownArguments(t *testing.T) {
 
 func TestBatchReviewToolRejectsDuplicateSelection(t *testing.T) {
 	session, _, _ := connect(t, Options{})
-	created := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	created := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	if created.ExitCode != 0 {
 		t.Fatal(created)
 	}
@@ -258,7 +258,7 @@ func TestServerInstructionsStayCompactAndActionable(t *testing.T) {
 
 func TestResolutionFileCannotReadOutsideLane(t *testing.T) {
 	session, r, s := connect(t, Options{})
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	if out.ExitCode != 0 {
 		t.Fatal(out)
 	}
@@ -294,7 +294,7 @@ func TestExpansionPreviewReportsSourceBytes(t *testing.T) {
 	_, r, s := connect(t, Options{})
 	r.Write("B/data.txt", "additional source\n")
 	r.Commit("additional project")
-	if _, err := s.engine.Create(context.Background(), "one", workspace.CreateOptions{Projects: []string{"A"}}, false); err != nil {
+	if _, err := s.engine.Create(context.Background(), "one", workspace.CreateOptions{AllowTempRoot: true, Projects: []string{"A"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	preview, err := s.engine.Expand(context.Background(), "one", []string{"B"}, true)
@@ -307,7 +307,7 @@ func TestAliasedProjectValidationUsesManifestPath(t *testing.T) {
 	session, r, _ := connect(t, Options{})
 	r.Write(".workcopy.json", `{"schemaVersion":1,"discovery":{"adapters":["dotnet"]},"projects":[{"id":"api","path":"A","kind":"dotnet"}]}`)
 	r.Commit("aliased project")
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"api"}})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"api"}})
 	if out.ExitCode != 0 {
 		t.Fatal(out)
 	}
@@ -322,17 +322,17 @@ func TestBusyCancellationAndShareConsent(t *testing.T) {
 	if !s.beginMutation(s.engine.WorkRoot) {
 		t.Fatal("fixture mutation lock unavailable")
 	}
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	s.endMutation(s.engine.WorkRoot)
 	if out.ExitCode != 3 || out.Error.Code != "workspace-busy" {
 		t.Fatal("busy writer not reported", out)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "workcopy_create", Arguments: Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}}}); err == nil {
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "workcopy_create", Arguments: Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}}}); err == nil {
 		t.Fatal("cancelled request accepted")
 	}
-	out = call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
+	out = call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "one"}}, Projects: []string{"A"}})
 	if out.ExitCode != 0 {
 		t.Fatal(out)
 	}
@@ -384,7 +384,7 @@ func TestEmptyCollectionsAndNoCommandCandidatesMatchSchema(t *testing.T) {
 	session, r, _ := connect(t, Options{})
 	r.Write("tools/package.json", `{"name":"offline-tool","scripts":{}}`)
 	r.Commit("node manifest")
-	out := call(t, session, "create", Create{Mutation: Mutation{Lane: Lane{Name: "node"}}, Projects: []string{"tools"}})
+	out := call(t, session, "create", Create{AllowTempRoot: true, Mutation: Mutation{Lane: Lane{Name: "node"}}, Projects: []string{"tools"}})
 	if out.ExitCode != 0 {
 		t.Fatalf("node lane creation failed: exit=%d error=%+v report=%+v", out.ExitCode, out.Error, out.Report)
 	}

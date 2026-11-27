@@ -236,6 +236,7 @@ type Config struct {
 }
 type Selection struct {
 	All      bool     `json:"all"`
+	Profile  string   `json:"profile,omitempty"`
 	Projects []string `json:"projects,omitempty"`
 	Paths    []string `json:"paths,omitempty"`
 	Include  []string `json:"include,omitempty"`
@@ -253,7 +254,8 @@ type Mapping struct {
 }
 type Review struct {
 	ID         string                 `json:"id"`
-	Path       string                 `json:"path"`
+	Path       string                 `json:"path,omitempty"`
+	Worktree   bool                   `json:"worktree,omitempty"`
 	State      string                 `json:"state"`
 	BaseCommit string                 `json:"baseCommit"`
 	Commit     string                 `json:"commit,omitempty"`
@@ -295,6 +297,9 @@ type Manifest struct {
 	Generation            uint64 `json:"generation"`
 	Phase                 string `json:"phase"`
 	RespectExecutableBits bool   `json:"respectExecutableBits"`
+	// LocalGit records that the lane was initialized with an isolated,
+	// standalone local .git repository (never a worktree or remote).
+	LocalGit bool `json:"localGit,omitempty"`
 	// OwnerConfig records that Config came from a file the owner chose
 	// (--config, or the MCP server's --config) rather than from the repository.
 	OwnerConfig bool      `json:"ownerConfig,omitempty"`

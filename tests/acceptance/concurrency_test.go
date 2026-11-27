@@ -76,7 +76,7 @@ func TestConcurrentProcessesKeepLanesIndependent(t *testing.T) {
 					return
 				}
 			}
-			out, code = retryBusy(t, lane, "merge", "--json")
+			out, code = retryBusy(t, lane, "merge", "--worktree", "--json")
 			var merged workspace.Report
 			if code != 0 || json.Unmarshal([]byte(out), &merged) != nil || merged.Review == nil {
 				failures <- fmt.Sprintf("%s: merge exit %d %s", name, code, out)

@@ -172,7 +172,7 @@ func TestBatchPreservesStreamedFileContributions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := engine.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := engine.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestBatchPreservesStreamedFileContributions(t *testing.T) {
 	if conflicted.BatchConflict == nil {
 		t.Fatalf("expected a large-file conflict, got %+v: %v", conflicted, err)
 	}
-	review, err := engine.PrepareBatchWith(ctx, []string{"task"}, "main", []BatchResolution{{Token: conflicted.BatchConflict.Token, Choice: "lane"}}, false)
+	review, err := engine.PrepareBatchWithOptions(ctx, []string{"task"}, "main", []BatchResolution{{Token: conflicted.BatchConflict.Token, Choice: "lane"}}, true, false, nil)
 	if err != nil || review.Batch == nil {
 		t.Fatalf("prepare large-file review: %+v: %v", review, err)
 	}
@@ -199,6 +199,32 @@ func TestBatchPreservesStreamedFileContributions(t *testing.T) {
 	}
 	if got := digest(laneFile(t, r.Path, path)); got != digest(body) {
 		t.Fatalf("landing contains incorrect large-file bytes: %s", got)
+	}
+}
+
+func TestWorktreeFreeBatchReviewAndLand(t *testing.T) {
+	r, engine, lane := fixtureLane(t)
+	ctx := t.Context()
+	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("worktree-free batch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	beforeWorktrees := r.Git("worktree", "list", "--porcelain")
+	prepared, err := engine.PrepareBatch(ctx, []string{"task"}, "main", false)
+	if err != nil || prepared.Batch == nil {
+		t.Fatalf("prepare worktree-free batch: %+v: %v", prepared, err)
+	}
+	if prepared.Batch.Path != "" || prepared.Batch.Worktree {
+		t.Fatalf("default batch review should not create a worktree: %+v", prepared.Batch)
+	}
+	if afterWorktrees := r.Git("worktree", "list", "--porcelain"); afterWorktrees != beforeWorktrees {
+		t.Fatalf("default batch review created a git worktree:\n%s", afterWorktrees)
+	}
+	if _, err := engine.LandBatch(ctx, prepared.Batch.ID, true, false); err != nil {
+		t.Fatalf("land worktree-free batch: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(r.Path, "b.txt"))
+	if err != nil || string(got) != "worktree-free batch\n" {
+		t.Fatalf("landed content mismatch: %q %v", got, err)
 	}
 }
 

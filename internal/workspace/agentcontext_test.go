@@ -80,7 +80,7 @@ func TestNewLaneReceivesOnlyInstructionContext(t *testing.T) {
 	ctx := context.Background()
 	r := contextRepository(t)
 	e := contextEngine(t, r, nil)
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestAgentContextNeverReachesAReviewOrACommit(t *testing.T) {
 	ctx := context.Background()
 	r := contextRepository(t)
 	e := contextEngine(t, r, nil)
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestDestroyDiscardsCopiesWithoutForceAndLeavesTheMainCheckoutAlone(t *testi
 	ctx := context.Background()
 	r := contextRepository(t)
 	e := contextEngine(t, r, nil)
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestRefreshFollowsTheMainCheckoutWithoutLosingLaneEdits(t *testing.T) {
 	ctx := context.Background()
 	r := contextRepository(t)
 	e := contextEngine(t, r, nil)
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestSyncRefreshesContextUnlessTurnedOff(t *testing.T) {
 			values[settings.AgentContextOnSync] = "off"
 		}
 		e := contextEngine(t, r, values)
-		created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+		created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,19 +298,19 @@ func TestSettingsDecideWhatIsCopied(t *testing.T) {
 	}
 
 	e = contextEngine(t, r, map[string]string{settings.AgentContext: "off"})
-	created, err := e.Create(ctx, "off", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "off", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil || created.AgentContext != nil || exists(t, filepath.Join(created.Workspace.Path, "CLAUDE.md")) {
 		t.Fatalf("switched off means nothing is copied: %+v %v", created.AgentContext, err)
 	}
 
 	e = contextEngine(t, r, map[string]string{settings.AgentContextDetect: "off", settings.AgentContextInclude: "CLAUDE.md"})
-	created, err = e.Create(ctx, "manual", CreateOptions{All: true}, false)
+	created, err = e.Create(ctx, "manual", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil || strings.Join(created.AgentContext.Added, ",") != "CLAUDE.md" {
 		t.Fatalf("with detection off only the include list applies: %+v %v", created.AgentContext, err)
 	}
 
 	e = contextEngine(t, r, map[string]string{settings.AgentContextMaxFiles: "2"})
-	created, err = e.Create(ctx, "capped", CreateOptions{All: true}, false)
+	created, err = e.Create(ctx, "capped", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil || len(created.AgentContext.Added) != 2 || !strings.Contains(skippedText(created.AgentContext), "file-count limit") {
 		t.Fatalf("the file-count limit must apply and be reported: %+v %v", created.AgentContext, err)
 	}
@@ -329,7 +329,7 @@ func TestRefreshNeverReplacesAFileItDidNotPlace(t *testing.T) {
 	ctx := context.Background()
 	r := contextRepository(t)
 	e := contextEngine(t, r, map[string]string{settings.AgentContext: "off"})
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

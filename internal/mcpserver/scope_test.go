@@ -27,7 +27,7 @@ func TestRepositoryAndRootScopeArePerCall(t *testing.T) {
 	second.Write("A/a.txt", "second\n")
 	second.Commit("second repository")
 	root := filepath.Join(second.Parent, "custom-lanes")
-	args := map[string]any{"repo": second.Path, "root": root, "name": "worker", "projects": []string{"A"}, "dryRun": true}
+	args := map[string]any{"repo": second.Path, "root": root, "name": "worker", "projects": []string{"A"}, "dryRun": true, "allowTempRoot": true}
 	preview := call(t, session, "create", args)
 	if preview.ExitCode != 0 {
 		t.Fatalf("scoped preview: %+v", preview)
@@ -87,11 +87,11 @@ func TestRepositoryFreeDefaultsAndRootLocks(t *testing.T) {
 			t.Fatalf("default parent not applied: %+v", out)
 		}
 		roots = append(roots, out.Scope.Root)
-		created := call(t, session, "create", map[string]any{"repo": r.Path, "name": "worker", "projects": []string{"A"}, "dryRun": false})
+		created := call(t, session, "create", map[string]any{"repo": r.Path, "name": "worker", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 		if created.ExitCode != 0 || created.Report.Workspace.Path != filepath.Join(out.Scope.Root, "worker") {
 			t.Fatalf("same-named scoped lane: %+v", created)
 		}
-		limited := call(t, session, "create", map[string]any{"repo": r.Path, "name": "extra", "projects": []string{"A"}, "dryRun": false})
+		limited := call(t, session, "create", map[string]any{"repo": r.Path, "name": "extra", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 		if limited.ExitCode != 3 || limited.Error.Code != "lane-limit" {
 			t.Fatal("per-root admission bypassed", limited)
 		}
@@ -117,7 +117,7 @@ func TestRepositoryFreeDefaultsAndRootLocks(t *testing.T) {
 
 func TestCleanupAndPreviewRemainAvailableBelowReserve(t *testing.T) {
 	session, _, s := connect(t, Options{})
-	created := call(t, session, "create", map[string]any{"name": "worker", "projects": []string{"A"}, "dryRun": false})
+	created := call(t, session, "create", map[string]any{"name": "worker", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if created.ExitCode != 0 {
 		t.Fatal(created)
 	}
@@ -132,11 +132,11 @@ func TestCleanupAndPreviewRemainAvailableBelowReserve(t *testing.T) {
 			t.Fatalf("guarded cleanup blocked by allocation reserve: %+v", out)
 		}
 	}
-	preview := call(t, session, "create", map[string]any{"name": "next", "projects": []string{"A"}, "dryRun": true})
+	preview := call(t, session, "create", map[string]any{"name": "next", "projects": []string{"A"}, "dryRun": true, "allowTempRoot": true})
 	if preview.ExitCode != 0 {
 		t.Fatal("read-only preview blocked by reserve", preview)
 	}
-	blocked := call(t, session, "create", map[string]any{"name": "next", "projects": []string{"A"}, "dryRun": false})
+	blocked := call(t, session, "create", map[string]any{"name": "next", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if blocked.ExitCode != 3 || blocked.Error.Code != "disk-budget" {
 		t.Fatal("allocation admitted below reserve", blocked)
 	}
@@ -144,7 +144,7 @@ func TestCleanupAndPreviewRemainAvailableBelowReserve(t *testing.T) {
 
 func TestBootstrapIdentifiesCurrentLaneDirectory(t *testing.T) {
 	session, _, _ := connect(t, Options{})
-	created := call(t, session, "create", map[string]any{"name": "worker", "projects": []string{"A"}, "dryRun": false})
+	created := call(t, session, "create", map[string]any{"name": "worker", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if created.ExitCode != 0 {
 		t.Fatal(created)
 	}

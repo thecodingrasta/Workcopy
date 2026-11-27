@@ -19,13 +19,16 @@ import (
 )
 
 type MergeOptions struct {
-	Commit, Approve   bool
-	ReviewID, Message string
+	Commit, Approve, Worktree bool
+	ReviewID, Message         string
 }
 
 func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, dryRun bool) (Report, error) {
 	report := Report{Command: "merge"}
 	if options.Commit {
+		if options.Worktree {
+			return report, model.Fail(2, "invalid-arguments", "--worktree applies to review preparation, not --commit")
+		}
 		if !options.Approve || options.ReviewID == "" || strings.TrimSpace(options.Message) == "" {
 			return report, model.Fail(2, "commit-approval-required", "Commit requires --approve, --review RECEIPT and --message MESSAGE")
 		}
@@ -42,7 +45,11 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 		report.Workspace = status.Workspace
 		report.Conflicts = status.Conflicts
 		report.ExitCode = status.ExitCode
-		report.Plan = &Plan{Action: "merge", Effects: []string{"Reconcile upstream before preparing an unstaged separate review worktree", "Do not create a commit or modify the source checkout"}}
+		effects := []string{"Reconcile upstream before preparing a worktree-free review receipt", "Do not create a Git worktree, commit, or modify the source checkout"}
+		if options.Worktree {
+			effects = []string{"Reconcile upstream before preparing an unstaged separate review worktree", "Do not create a commit or modify the source checkout"}
+		}
+		report.Plan = &Plan{Action: "merge", Effects: effects}
 		report.Message = "Review preparation planned. Text-merge outcomes are evaluated during apply."
 		return report, nil
 	}
@@ -88,15 +95,18 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 		return report, nil
 	}
 	for _, receipt := range opened.snapshot.Manifest.Reviews {
-		if receipt.State == "prepared" && receipt.Generation == opened.snapshot.Manifest.Generation {
+		if receipt.State == "prepared" && receipt.Generation == opened.snapshot.Manifest.Generation && receipt.Worktree == options.Worktree {
 			if err = e.verifyLaneReceipt(ctx, opened, receipt); err == nil {
-				if err = e.verifyReviewGit(ctx, receipt, receipt.BaseCommit); err != nil {
-					return report, err
-				}
-				if err = e.verifyReviewFiles(receipt, opened.snapshot.Manifest.RespectExecutableBits); err != nil {
-					return report, err
+				if receipt.Path != "" {
+					if err = e.verifyReviewGit(ctx, receipt, receipt.BaseCommit); err != nil {
+						return report, err
+					}
+					if err = e.verifyReviewFiles(receipt, opened.snapshot.Manifest.RespectExecutableBits); err != nil {
+						return report, err
+					}
 				}
 				report.Review = &receipt
+				report.Changes = delta
 				report.Message = "Existing unchanged review reused."
 				return report, nil
 			}
@@ -118,11 +128,14 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	if err != nil {
 		return report, err
 	}
-	directoryName, err := e.newReviewDirectory(name, id)
-	if err != nil {
-		return report, err
+	receipt := model.Review{ID: id, Worktree: options.Worktree, State: "preparing", BaseCommit: commit, Files: map[string]model.FileVersion{}}
+	if options.Worktree {
+		directoryName, dirErr := e.newReviewDirectory(name, id)
+		if dirErr != nil {
+			return report, dirErr
+		}
+		receipt.Path = filepath.Join(e.WorkRoot, ".workcopy-reviews", directoryName)
 	}
-	receipt := model.Review{ID: id, Path: filepath.Join(e.WorkRoot, ".workcopy-reviews", directoryName), State: "preparing", BaseCommit: commit, Files: map[string]model.FileVersion{}}
 	reader, err := e.Repository.Reader(ctx)
 	if err != nil {
 		return report, err
@@ -167,11 +180,15 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 		}
 		receipt.Files[change.Path] = version
 	}
-	if err = noGitAncestor(filepath.Dir(receipt.Path)); err != nil {
-		return report, err
-	}
-	if err = registry.MkdirAll(".workcopy-reviews", 0700); err != nil {
-		return report, err
+	if options.Worktree {
+		if err = noGitAncestor(filepath.Dir(receipt.Path)); err != nil {
+			return report, err
+		}
+		if err = registry.MkdirAll(".workcopy-reviews", 0700); err != nil {
+			return report, err
+		}
+	} else {
+		receipt.State = "prepared"
 	}
 	next := newGeneration(opened.snapshot)
 	receipt.Generation = next.Manifest.Generation
@@ -179,8 +196,10 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	if err = saveSnapshot(opened.store, next); err != nil {
 		return report, err
 	}
-	if err = e.finishReview(ctx, opened.store, receipt); err != nil {
-		return report, fmt.Errorf("review preparation preserved its receipt; run recover: %w", err)
+	if options.Worktree {
+		if err = e.finishReview(ctx, opened.store, receipt); err != nil {
+			return report, fmt.Errorf("review preparation preserved its receipt; run recover: %w", err)
+		}
 	}
 	fresh, err := opened.store.Load()
 	if err != nil {
@@ -194,8 +213,13 @@ func (e *Engine) Merge(ctx context.Context, name string, options MergeOptions, d
 	}
 	report.Workspace = view(fresh)
 	report.Generation = fresh.Manifest.Generation
-	report.Message = "Unstaged review worktree prepared. Review its diff before an explicit commit. Main checkout was not changed."
-	if report.Review != nil {
+	report.Changes = delta
+	if options.Worktree {
+		report.Message = "Unstaged review worktree prepared. Review its diff before an explicit commit. Main checkout was not changed."
+	} else {
+		report.Message = "Worktree-free review prepared (no review worktree created). Inspect reported changes or re-run with --worktree for an on-disk review worktree; approve with --commit --approve --review <id> --message <msg>."
+	}
+	if report.Review != nil && report.Review.Path != "" {
 		if warning := e.reviewLongPathWarning(ctx, *report.Review); warning != "" {
 			report.Warnings = append(report.Warnings, warning)
 		}

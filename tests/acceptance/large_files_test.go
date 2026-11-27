@@ -102,7 +102,7 @@ func TestLargeTrackedAndUntrackedFilesWorkThroughTheRealBinary(t *testing.T) {
 	if status := laneReport(t, lane, nil, 0, "status"); len(status.Changes) != 1 || status.Changes[0].Path != "download.zip" {
 		t.Fatalf("status must list the large file as the lane's work, got %v", head(changedPaths(status)))
 	}
-	review := laneReport(t, lane, nil, 0, "merge")
+	review := laneReport(t, lane, nil, 0, "merge", "--worktree")
 	assertSameBytes(t, filepath.Join(lane, "download.zip"), filepath.Join(review.Review.Path, "download.zip"))
 	committed := laneReport(t, lane, []string{"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@example.invalid"}, 0, "merge", "--commit", "--approve", "--review", review.Review.ID, "--message", "add download")
 	if size := gitText(t, r.Path, "cat-file", "-s", committed.Review.Commit+":download.zip"); size != "69206016" {

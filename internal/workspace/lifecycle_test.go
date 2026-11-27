@@ -20,7 +20,7 @@ func fixtureLane(t *testing.T) (*testutil.Repository, *Engine, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(context.Background(), "task", CreateOptions{All: true}, false)
+	created, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestCreateUsesSelectedSnapshotNotDirtyCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := e.Create(context.Background(), "task", CreateOptions{Branch: "feature", All: true}, false)
+	report, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, Branch: "feature", All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestCreateRejectsChangedAdmittedCommitBeforeWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := CreateOptions{All: true, ExpectedCommit: expected}
+	options := CreateOptions{AllowTempRoot: true, All: true, ExpectedCommit: expected}
 	if _, err = e.Create(context.Background(), "worker", options, true); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestDryRunCreateDoesNotCreateWorkRoot(t *testing.T) {
 	r.Commit("base")
 	root := filepath.Join(r.Parent, "lanes")
 	e, _ := New(context.Background(), r.Path, root)
-	if _, err := e.Create(context.Background(), "task", CreateOptions{All: true}, true); err != nil {
+	if _, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, All: true}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
@@ -155,5 +155,64 @@ func TestStatusIncludesRootChangesAndIgnoresUntrackedSecrets(t *testing.T) {
 	}
 	if len(r.Changes) != 1 || r.Changes[0].Path != "a.txt" {
 		t.Fatalf("wrong changes: %+v", r.Changes)
+	}
+}
+
+func TestCreateRefusesTempDirectoryWithoutAllowTempRoot(t *testing.T) {
+	r := testutil.NewRepository(t)
+	r.Write("a", "base")
+	r.Commit("base")
+	root := filepath.Join(r.Parent, "lanes")
+	e, err := New(context.Background(), r.Path, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.Create(context.Background(), "task", CreateOptions{All: true}, true); failureCode(t, err) != "temp-work-root-refused" {
+		t.Fatalf("expected temp-work-root-refused on dry-run, got: %v", err)
+	}
+	if _, err = e.Create(context.Background(), "task", CreateOptions{All: true}, false); failureCode(t, err) != "temp-work-root-refused" {
+		t.Fatalf("expected temp-work-root-refused on apply, got: %v", err)
+	}
+}
+
+func TestCreateWithLocalGitIsStandaloneNotWorktree(t *testing.T) {
+	r := testutil.NewRepository(t)
+	r.Write("a.txt", "base\n")
+	r.Commit("base")
+	root := filepath.Join(r.Parent, "lanes")
+	e, err := New(context.Background(), r.Path, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true, LocalGit: true}, false)
+	if err != nil {
+		t.Fatalf("create with LocalGit failed: %v", err)
+	}
+	lane := created.Workspace.Path
+	gitInfo, err := os.Lstat(filepath.Join(lane, ".git"))
+	if err != nil || !gitInfo.IsDir() {
+		t.Fatalf("lane .git must be a standalone directory, not a worktree gitfile: %v %v", gitInfo, err)
+	}
+	if remotes := r.GitAt(lane, "", "remote"); remotes != "" {
+		t.Fatalf("lane git must have no remotes: %q", remotes)
+	}
+	if status := r.GitAt(lane, "", "status", "--porcelain"); status != "" {
+		t.Fatalf("lane git status should be clean initially, got: %q", status)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "b.txt"), []byte("lane edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.GitAt(lane, "", "add", "b.txt")
+	r.GitAt(lane, "", "-c", "user.name=Dev", "-c", "user.email=dev@example.invalid", "commit", "-m", "local lane commit")
+	st, err := e.Status(ctx, "task")
+	if err != nil || len(st.Changes) != 1 || st.Changes[0].Path != "b.txt" {
+		t.Fatalf("workcopy status must still see lane edit after local git commit: %+v %v", st.Changes, err)
+	}
+	if _, err := e.Destroy(ctx, "task", true, false); err != nil {
+		t.Fatalf("destroy LocalGit lane failed: %v", err)
+	}
+	if _, err := os.Stat(lane); !os.IsNotExist(err) {
+		t.Fatalf("destroyed LocalGit lane still exists: %v", err)
 	}
 }

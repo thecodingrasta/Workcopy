@@ -103,14 +103,14 @@ func TestNewReviewsUseTheShortNameAndNeverCollide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(created.Workspace.Path, "src", "p00", "dir0", "file0000.txt"), []byte("edited\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

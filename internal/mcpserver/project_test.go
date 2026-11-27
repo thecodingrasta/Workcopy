@@ -35,7 +35,7 @@ func TestRepositorySettingsApplyToScopedCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	created := call(t, session, "create", map[string]any{"repo": mine.Path, "name": "task", "projects": []string{"only-in-mine"}, "dryRun": false})
+	created := call(t, session, "create", map[string]any{"repo": mine.Path, "name": "task", "projects": []string{"only-in-mine"}, "dryRun": false, "allowTempRoot": true})
 	if created.ExitCode != 0 || created.Report.Workspace.Path != filepath.Join(lanes, "task") {
 		t.Fatalf("the repository's lane root and owner config must apply: %+v %+v", created.Error, created.Report.Workspace)
 	}
@@ -47,13 +47,13 @@ func TestRepositorySettingsApplyToScopedCalls(t *testing.T) {
 	if other.ExitCode == 0 {
 		t.Fatalf("a repository without the file must not inherit another's owner config: %+v", other.Report.Plan)
 	}
-	placed := call(t, session, "create", map[string]any{"repo": theirs.Path, "name": "task", "projects": []string{"A"}, "dryRun": false})
+	placed := call(t, session, "create", map[string]any{"repo": theirs.Path, "name": "task", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if placed.ExitCode != 0 || filepath.Dir(placed.Report.Workspace.Path) == lanes || filepath.Dir(filepath.Dir(placed.Report.Workspace.Path)) != defaultLanes {
 		t.Fatalf("the neighbour keeps the server's default placement: %+v %+v", placed.Error, placed.Report.Workspace)
 	}
 	// A call with an explicit root still wins over the file.
 	explicit := filepath.Join(mine.Parent, "explicit")
-	won := call(t, session, "create", map[string]any{"repo": mine.Path, "root": explicit, "name": "other", "projects": []string{"A"}, "dryRun": false})
+	won := call(t, session, "create", map[string]any{"repo": mine.Path, "root": explicit, "name": "other", "projects": []string{"A"}, "dryRun": false, "allowTempRoot": true})
 	if won.ExitCode != 0 || won.Report.Workspace.Path != filepath.Join(explicit, "other") {
 		t.Fatalf("an explicit root beats the repository file: %+v %+v", won.Error, won.Report.Workspace)
 	}

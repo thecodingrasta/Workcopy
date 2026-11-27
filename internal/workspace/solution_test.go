@@ -21,7 +21,7 @@ EndProject
 `)
 	r.Commit("solution")
 	e, _ := New(context.Background(), r.Path, filepath.Join(r.Parent, "lanes"))
-	created, err := e.Create(context.Background(), "task", CreateOptions{Projects: []string{"A/A.csproj"}}, false)
+	created, err := e.Create(context.Background(), "task", CreateOptions{AllowTempRoot: true, Projects: []string{"A/A.csproj"}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

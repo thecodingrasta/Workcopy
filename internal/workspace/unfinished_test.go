@@ -22,13 +22,13 @@ func TestDestroyForceDiscardsALaneWhoseCreationNeverFinished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	neighbour, err := e.Create(background, "neighbour", CreateOptions{All: true}, false)
+	neighbour, err := e.Create(background, "neighbour", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := cancelAfter(256)
 	defer cancel()
-	if _, err = e.Create(ctx, "stuck", CreateOptions{All: true}, false); err == nil {
+	if _, err = e.Create(ctx, "stuck", CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 		t.Fatal("the interrupted creation must report failure")
 	} else if !strings.Contains(err.Error(), "destroy stuck --force") {
 		t.Fatalf("the failure must say how to discard the lane, got: %v", err)
@@ -82,7 +82,7 @@ func TestDestroyForceDiscardsALaneWhoseCreationNeverFinished(t *testing.T) {
 	if _, statErr := os.Lstat(neighbour.Workspace.Path); statErr != nil {
 		t.Fatal(statErr)
 	}
-	if _, err = e.Create(background, "stuck", CreateOptions{All: true}, false); err != nil {
+	if _, err = e.Create(background, "stuck", CreateOptions{AllowTempRoot: true, All: true}, false); err != nil {
 		t.Fatalf("the discarded name must be reusable: %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestNameCollisionOnTheLaneVolumeIsRefusedBeforeAnythingIsWritten(t *testing
 		asked = names
 		return &fsops.NameCollision{First: "docs/caf\u00e9.txt", Second: "docs/cafe\u0301.txt"}, nil
 	}
-	_, err = e.Create(background, "task", CreateOptions{All: true}, false)
+	_, err = e.Create(background, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if failureCode(t, err) != "name-collision" {
 		t.Fatalf("want name-collision, got %v", err)
 	}
@@ -169,7 +169,7 @@ func TestNameCollisionOnTheLaneVolumeIsRefusedBeforeAnythingIsWritten(t *testing
 		t.Errorf("no pinned ref may exist:\n%s", pins)
 	}
 	findNameCollision = was
-	if _, err = e.Create(background, "task", CreateOptions{All: true}, false); err != nil {
+	if _, err = e.Create(background, "task", CreateOptions{AllowTempRoot: true, All: true}, false); err != nil {
 		t.Fatalf("the name must be usable once the collision is gone: %v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestNameCollisionOnTheLaneVolumeIsRefusedBeforeAnythingIsWritten(t *testing
 	findNameCollision = func(*fsops.Root, []string) (*fsops.NameCollision, error) {
 		return nil, os.ErrPermission
 	}
-	if _, err = e.Create(background, "other", CreateOptions{All: true}, false); err == nil {
+	if _, err = e.Create(background, "other", CreateOptions{AllowTempRoot: true, All: true}, false); err == nil {
 		t.Fatal("a failing probe must stop creation")
 	}
 	if _, statErr := os.Lstat(filepath.Join(e.WorkRoot, "other")); !os.IsNotExist(statErr) {

@@ -157,10 +157,18 @@ func writeResult(stdout, stderr io.Writer, jsonMode bool, report workspace.Repor
 		fmt.Fprintf(stdout, "CONFLICT   %s\n  token: %s\n  reason: %s\n", conflict.Path, conflict.ID, conflict.Reason)
 	}
 	if report.Review != nil {
-		fmt.Fprintf(stdout, "Review: %s\nReceipt: %s (%s)\n", report.Review.Path, report.Review.ID, report.Review.State)
+		if report.Review.Path != "" {
+			fmt.Fprintf(stdout, "Review: %s\nReceipt: %s (%s)\n", report.Review.Path, report.Review.ID, report.Review.State)
+		} else {
+			fmt.Fprintf(stdout, "Receipt: %s (%s)\n", report.Review.ID, report.Review.State)
+		}
 	}
 	if batch := report.Batch; batch != nil {
-		fmt.Fprintf(stdout, "Batch: %s (%s)\nLanes: %s\nTarget: %s\nReview: %s\nBase: %s\nCandidate: %s\n", batch.ID, batch.State, strings.Join(batch.Lanes, ", "), batch.Target, batch.Path, batch.Base, batch.Commit)
+		reviewLine := ""
+		if batch.Path != "" {
+			reviewLine = fmt.Sprintf("Review: %s\n", batch.Path)
+		}
+		fmt.Fprintf(stdout, "Batch: %s (%s)\nLanes: %s\nTarget: %s\n%sBase: %s\nCandidate: %s\n", batch.ID, batch.State, strings.Join(batch.Lanes, ", "), batch.Target, reviewLine, batch.Base, batch.Commit)
 	}
 	if context := report.AgentContext; context != nil {
 		if report.Command == "agent-context" {
@@ -322,11 +330,11 @@ func locateTarget(a arguments, resolved *settings.Resolved) (target, error) {
 func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (workspace.Report, error) {
 	empty := workspace.Report{Command: a.command}
 	allowed := map[string]string{
-		"create": "branch profile project config all share trust-shared dependency-identity agent include-files",
+		"create": "branch profile project config all share trust-shared dependency-identity agent include-files allow-temp-root git",
 		"expand": "project include-files", "status": "", "path": "", "storage": "", "sync": "agent include-files", "list": "", "destroy": "force",
 		"resolve": "use-local use-upstream delete from-file expect-conflict expect-local",
-		"merge":   "commit approve review message no-commit include-files", "content": "side offset limit",
-		"batch-review": "branch from-file include-files", "batch-land": "approve", "batch-recover": "",
+		"merge":   "commit approve review message no-commit include-files worktree", "content": "side offset limit",
+		"batch-review": "branch from-file include-files worktree", "batch-land": "approve", "batch-recover": "",
 		"recover": "abandon-review", "share": "path target dependency-identity trust-shared", "unshare": "path",
 		"solution": "solution", "discover": "config", "doctor": "", "legacy": "", "settings": "init project-file agent", "agent-context": "refresh agent",
 	}
@@ -406,7 +414,7 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 			}
 			resolutions = document.Resolutions
 		}
-		return engine.PrepareBatchWith(ctx, a.positionals, a.value("branch"), resolutions, dryRun)
+		return engine.PrepareBatchWithOptions(ctx, a.positionals, a.value("branch"), resolutions, a.boolean("worktree"), dryRun, nil)
 	case "batch-land":
 		if len(a.positionals) != 1 {
 			return empty, usage(errors.New("batch-land takes one batch ID"))
@@ -421,7 +429,7 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 		if len(positional) != 0 {
 			return empty, usage(errors.New("create takes one lane name; select projects with repeated --project"))
 		}
-		return engine.Create(ctx, name, workspace.CreateOptions{Branch: a.value("branch"), Profile: a.value("profile"), Projects: a.values["project"], All: a.boolean("all"), ConfigPath: configFile, Shares: a.values["share"], TrustShared: a.boolean("trust-shared"), DependencyIdentity: a.value("dependency-identity")}, dryRun)
+		return engine.Create(ctx, name, workspace.CreateOptions{Branch: a.value("branch"), Profile: a.value("profile"), Projects: a.values["project"], All: a.boolean("all"), ConfigPath: configFile, Shares: a.values["share"], TrustShared: a.boolean("trust-shared"), DependencyIdentity: a.value("dependency-identity"), AllowTempRoot: a.boolean("allow-temp-root"), LocalGit: a.boolean("git")}, dryRun)
 	case "expand":
 		return engine.Expand(ctx, name, append(a.values["project"], positional...), dryRun)
 	case "resolve":
@@ -466,7 +474,7 @@ func execute(ctx context.Context, a arguments, resolved *settings.Resolved) (wor
 		if a.boolean("commit") && a.boolean("no-commit") {
 			return empty, usage(errors.New("--commit and --no-commit cannot be combined"))
 		}
-		return engine.Merge(ctx, name, workspace.MergeOptions{Commit: a.boolean("commit"), Approve: a.boolean("approve"), ReviewID: a.value("review"), Message: a.value("message")}, dryRun)
+		return engine.Merge(ctx, name, workspace.MergeOptions{Commit: a.boolean("commit"), Approve: a.boolean("approve"), Worktree: a.boolean("worktree"), ReviewID: a.value("review"), Message: a.value("message")}, dryRun)
 	case "recover":
 		return engine.RecoverWith(ctx, name, workspace.RecoverOptions{AbandonReview: a.boolean("abandon-review")}, dryRun)
 	case "share":
@@ -503,18 +511,18 @@ Usage:
 	             [--allow-share-target DIRECTORY ...]
   workcopy create NAME [--branch REF] [--profile NAME | --all]
                       [--project ID-OR-PATH ...] [--config FILE] [--dry-run]
-                      [--agent TOOL ...] [--include-files]
+                      [--agent TOOL ...] [--git] [--allow-temp-root] [--include-files]
   workcopy expand NAME PROJECT-OR-PATH ... [--include-files]
   workcopy status NAME
   workcopy path NAME
   workcopy storage NAME
   workcopy sync NAME [--dry-run] [--agent TOOL ...] [--include-files]
-  workcopy batch-review LANE [LANE ...] [--branch REF] [--from-file RESOLUTIONS] [--dry-run] [--include-files]
+  workcopy batch-review LANE [LANE ...] [--branch REF] [--from-file RESOLUTIONS] [--worktree] [--dry-run] [--include-files]
   workcopy batch-land BATCH-ID --approve [--dry-run]
   workcopy batch-recover BATCH-ID
   workcopy resolve NAME PATH --expect-conflict TOKEN
                    (--use-local | --use-upstream | --delete | --from-file FILE)
-  workcopy merge NAME [--dry-run] [--include-files]
+  workcopy merge NAME [--worktree] [--dry-run] [--include-files]
   workcopy merge NAME --commit --approve --review RECEIPT --message MESSAGE
   workcopy content NAME TOKEN --side base|local|upstream [--offset N] [--limit N]
   workcopy share NAME --path PATH --target DIRECTORY --trust-shared

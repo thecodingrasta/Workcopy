@@ -80,7 +80,7 @@ func TestLargeFilesRoundTripThroughEveryOperation(t *testing.T) {
 	}
 
 	// Create: a repository with big tracked files is no longer refused.
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatalf("a repository holding large files must be creatable: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestLargeFilesRoundTripThroughEveryOperation(t *testing.T) {
 	}
 
 	// Review, then commit: the committed blobs are exactly the lane's bytes.
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatalf("review with large files: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestFilesOverTheHardLimitAreRefusedByNameWithTheSetting(t *testing.T) {
 	r.Commit("one file over the limit")
 	ctx := context.Background()
 	e, _ := New(ctx, r.Path, filepath.Join(r.Parent, "lanes"))
-	_, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	_, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if failureCode(t, err) != "unsupported-source-entry" || !strings.Contains(err.Error(), "WORKCOPY_MAX_FILE_MIB") || !strings.Contains(err.Error(), "data/huge.bin") {
 		t.Fatalf("the refusal must name the file and the setting: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestDestroyDiscardsBuildOutputLargerThanTheInMemoryLimit(t *testing.T) {
 	}
 	ctx := context.Background()
 	e, _ := New(ctx, r.Path, filepath.Join(r.Parent, "lanes"))
-	created, err := e.Create(ctx, "task", CreateOptions{All: true, ConfigPath: owner}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true, ConfigPath: owner}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestAnUnignoredLargeFileDoesNotBreakStatusOrReview(t *testing.T) {
 	r.Commit("base")
 	ctx := context.Background()
 	e, _ := New(ctx, r.Path, filepath.Join(r.Parent, "lanes"))
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestAnUnignoredLargeFileDoesNotBreakStatusOrReview(t *testing.T) {
 	if err != nil || len(status.Changes) != 1 || status.Changes[0].Path != "dump.zip" || status.Changes[0].Kind != "added" {
 		t.Fatalf("status must list the large file, not fail: %+v %v", status.Changes, err)
 	}
-	review, err := e.Merge(ctx, "task", MergeOptions{}, false)
+	review, err := e.Merge(ctx, "task", MergeOptions{Worktree: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

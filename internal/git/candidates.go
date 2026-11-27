@@ -18,7 +18,7 @@ func (r *Repository) Candidates(ctx context.Context, lane string, excludedPaths 
 		return nil, err
 	}
 	index := filepath.Join(lane, ".workcopy", "unused-index-"+id)
-	arguments := []string{"--git-dir=" + r.CommonDir, "--work-tree=" + lane, "ls-files", "-z", "--others", "--exclude-standard", "--exclude=.workcopy/"}
+	arguments := []string{"--git-dir=" + r.CommonDir, "--work-tree=" + lane, "ls-files", "-z", "--others", "--exclude-standard", "--exclude=.workcopy/", "--exclude=.git/"}
 	// Exclude mappings before Git walks the tree, including Windows junctions.
 	// Escape glob syntax so a literal directory name cannot hide adjacent source.
 	escape := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", "]", "\\]")

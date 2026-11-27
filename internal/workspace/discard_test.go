@@ -53,7 +53,7 @@ func TestOwnerDeclaredBuildOutputIsDiscardedWithoutForce(t *testing.T) {
 	}
 
 	// Control: with no discard policy the same lane is refused.
-	plain, err := e.Create(ctx, "plain", CreateOptions{All: true}, false)
+	plain, err := e.Create(ctx, "plain", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestOwnerDeclaredBuildOutputIsDiscardedWithoutForce(t *testing.T) {
 		t.Fatalf("without a policy build output must still block deletion: %v", err)
 	}
 
-	owned, err := e.Create(ctx, "owned", CreateOptions{All: true, ConfigPath: config}, false)
+	owned, err := e.Create(ctx, "owned", CreateOptions{AllowTempRoot: true, All: true, ConfigPath: config}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestCommittedDiscardPolicyIsIgnoredAndMatchEverythingIsRejected(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := e.Create(ctx, "task", CreateOptions{All: true}, false)
+	created, err := e.Create(ctx, "task", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestCommittedDiscardPolicyIsIgnoredAndMatchEverythingIsRejected(t *testing.
 		if err = os.WriteFile(bad, []byte(`{"schemaVersion":1,"destroy":{"discard":["`+pattern+`"]}}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = e.Create(ctx, "bad", CreateOptions{All: true, ConfigPath: bad}, true); failureCode(t, err) != "invalid-discard-pattern" {
+		if _, err = e.Create(ctx, "bad", CreateOptions{AllowTempRoot: true, All: true, ConfigPath: bad}, true); failureCode(t, err) != "invalid-discard-pattern" {
 			t.Errorf("pattern %q must be rejected, got %v", pattern, err)
 		}
 	}

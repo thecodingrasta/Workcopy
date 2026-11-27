@@ -21,7 +21,7 @@ func sharingFixture(t *testing.T) (*Engine, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := engine.Create(context.Background(), "daily", CreateOptions{All: true}, false)
+	created, err := engine.Create(context.Background(), "daily", CreateOptions{AllowTempRoot: true, All: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

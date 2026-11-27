@@ -285,7 +285,7 @@ func exerciseShape(t *testing.T, c shapeCase) {
 		t.Fatalf("status must report exactly the three edits:\n got %q\nwant %q", got, wantChanges)
 	}
 
-	review := laneReport(t, lane, c.env, 0, "merge", "--include-files")
+	review := laneReport(t, lane, c.env, 0, "merge", "--worktree", "--include-files")
 	if review.Review == nil {
 		t.Fatal("merge produced no review")
 	}
